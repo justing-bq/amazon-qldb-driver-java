@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Errors.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">software.amazon.qldb:amazon-qldb-driver-java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.qldb.exceptions</a> &gt; <span class="el_source">Errors.java</span></div><h1>Errors.java</h1><pre class="source lang-java linenums">/*
+ * Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;). You may not use this file except in compliance with
+ * the License. A copy of the License is located at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * or in the &quot;license&quot; file accompanying this file. This file is distributed on an &quot;AS IS&quot; BASIS, WITHOUT WARRANTIES OR
+ * CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions
+ * and limitations under the License.
+ */
+
+package software.amazon.qldb.exceptions;
+
+import java.util.ResourceBundle;
+
+/**
+ * Enum identifying the possible error types when executing a transaction.
+ *
+ * &lt;p&gt;&lt;b&gt;Note&lt;/b&gt;: this enum is for internal use only.&lt;/p&gt;
+ */
+<span class="fc" id="L23">public enum Errors {</span>
+<span class="fc" id="L24">    ABORTED_EXCEPTION,         // txn aborted</span>
+<span class="fc" id="L25">    GET_SESSION_INTERRUPTED, // illegal state</span>
+<span class="fc" id="L26">    DRIVER_CLOSED,           // illegal state</span>
+<span class="fc" id="L27">    QUEUE_CAPACITY,</span>
+<span class="fc" id="L28">    RETRIEVE_INTERRUPTED,   // illegal state</span>
+<span class="fc" id="L29">    RESULT_PARENT_INACTIVE, // illegal state</span>
+<span class="fc" id="L30">    STREAM_RESULT_ITERATED, // illegal state</span>
+
+<span class="fc" id="L32">    NO_SESSION_AVAILABLE,   // driver problem</span>
+<span class="fc" id="L33">    TXN_DIGEST_MISMATCH,    // driver problem</span>
+<span class="fc" id="L34">    INCORRECT_TYPE,         // driver problem</span>
+<span class="fc" id="L35">    SERIALIZING_PARAMS,     // driver problem</span>
+
+<span class="fc" id="L37">    GENERIC_EXCEPTION;</span>
+
+
+<span class="fc" id="L40">    private static final ResourceBundle MESSAGES = ResourceBundle.getBundle(&quot;errors&quot;);</span>
+
+    /**
+     * Retrieve the localized error message associated with the enum value.
+     *
+     * @return The associated localized error message.
+     */
+    public String get() {
+<span class="fc" id="L48">        return MESSAGES.getString(this.name());</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

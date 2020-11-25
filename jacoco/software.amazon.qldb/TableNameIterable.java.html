@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TableNameIterable.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">software.amazon.qldb:amazon-qldb-driver-java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.qldb</a> &gt; <span class="el_source">TableNameIterable.java</span></div><h1>TableNameIterable.java</h1><pre class="source lang-java linenums">/*
+ * Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;). You may not use this file except in compliance with
+ * the License. A copy of the License is located at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * or in the &quot;license&quot; file accompanying this file. This file is distributed on an &quot;AS IS&quot; BASIS, WITHOUT WARRANTIES OR
+ * CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions
+ * and limitations under the License.
+ */
+
+package software.amazon.qldb;
+
+import com.amazon.ion.IonReader;
+import com.amazon.ion.IonType;
+import com.amazon.ion.IonValue;
+import com.amazon.ion.system.IonReaderBuilder;
+import java.util.Iterator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.annotations.NotThreadSafe;
+import software.amazon.qldb.exceptions.Errors;
+
+/**
+ * Iterable class to create an iterator over a result representing the list of tables within a ledger.
+ *
+ * Does the conversion from Ion values to strings, such that the iterator returns the string representation of the table
+ * names, rather than the IonValue representation.
+ */
+@NotThreadSafe
+class TableNameIterable implements Iterable&lt;String&gt; {
+<span class="fc" id="L34">    private static final Logger logger = LoggerFactory.getLogger(TableNameIterable.class);</span>
+
+    private final Iterable&lt;IonValue&gt; iteratorSeed;
+
+    /**
+     * Constructs a new iterable object for a result containing the table names.
+     *
+     * @param result
+     *              The result object containing the table names.
+     */
+<span class="fc" id="L44">    TableNameIterable(Result result) {</span>
+<span class="fc bfc" id="L45" title="All 2 branches covered.">        if (!(result instanceof BufferedResult)) {</span>
+            // Ensure that the underlying collection cannot be changed during iteration.
+<span class="fc" id="L47">            result = new BufferedResult(result);</span>
+        }
+<span class="fc" id="L49">        this.iteratorSeed = result;</span>
+<span class="fc" id="L50">    }</span>
+
+    @Override
+    public Iterator&lt;String&gt; iterator() {
+<span class="fc" id="L54">        return new TableNameIterator(iteratorSeed.iterator());</span>
+    }
+
+    /**
+     * Iterator which does the conversion from IonValue to string for the table name result.
+     */
+    private static class TableNameIterator implements Iterator&lt;String&gt; {
+        private final Iterator&lt;IonValue&gt; nameResultIterator;
+
+        /**
+         * Constructs a new iterator object over an IonValue iterator, which converts from IonValue to string.
+         *
+         * @param nameResultIterator
+         *              The iterator over the IonValue representation of table names.
+         */
+<span class="fc" id="L69">        TableNameIterator(Iterator&lt;IonValue&gt; nameResultIterator) {</span>
+<span class="fc" id="L70">            this.nameResultIterator = nameResultIterator;</span>
+<span class="fc" id="L71">        }</span>
+
+        @Override
+        public boolean hasNext() {
+<span class="fc" id="L75">            return nameResultIterator.hasNext();</span>
+        }
+
+        @Override
+        public String next() {
+<span class="fc" id="L80">            final IonReader reader = IonReaderBuilder.standard().build(nameResultIterator.next());</span>
+<span class="fc" id="L81">            final IonType type = reader.next();</span>
+<span class="fc bfc" id="L82" title="All 2 branches covered.">            if (IonType.STRING != type) {</span>
+<span class="fc" id="L83">                final String message = String.format(Errors.INCORRECT_TYPE.get(), IonType.STRING, type);</span>
+<span class="fc" id="L84">                logger.error(message);</span>
+<span class="fc" id="L85">                throw new IllegalStateException(message);</span>
+            }
+
+<span class="fc" id="L88">            return reader.stringValue();</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

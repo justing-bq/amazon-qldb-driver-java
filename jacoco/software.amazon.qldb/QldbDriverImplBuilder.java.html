@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>QldbDriverImplBuilder.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">software.amazon.qldb:amazon-qldb-driver-java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.qldb</a> &gt; <span class="el_source">QldbDriverImplBuilder.java</span></div><h1>QldbDriverImplBuilder.java</h1><pre class="source lang-java linenums">/*
+ * Copyright 2020 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;). You may not use this file except in compliance with
+ * the License. A copy of the License is located at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * or in the &quot;license&quot; file accompanying this file. This file is distributed on an &quot;AS IS&quot; BASIS, WITHOUT WARRANTIES OR
+ * CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions
+ * and limitations under the License.
+ */
+
+package software.amazon.qldb;
+
+import com.amazon.ion.IonSystem;
+import com.amazon.ion.system.IonSystemBuilder;
+import java.util.MissingResourceException;
+import java.util.ResourceBundle;
+import java.util.concurrent.ExecutorService;
+import software.amazon.awssdk.core.client.config.SdkAdvancedClientOption;
+import software.amazon.awssdk.core.internal.http.loader.DefaultSdkHttpClientBuilder;
+import software.amazon.awssdk.http.SdkHttpConfigurationOption;
+import software.amazon.awssdk.services.qldbsession.QldbSessionClientBuilder;
+import software.amazon.awssdk.utils.AttributeMap;
+import software.amazon.awssdk.utils.Validate;
+
+/**
+ * Builder object for creating a {@link QldbDriver}, allowing for configuration of the parameters of
+ * construction.
+ */
+class QldbDriverImplBuilder implements QldbDriverBuilder {
+    private static final String VERSION = &quot;QLDB Driver for Java v&quot;;
+    private static final String VERSION_KEY = &quot;project.version&quot;;
+
+<span class="fc" id="L36">    private static final IonSystem DEFAULT_ION_SYSTEM = IonSystemBuilder.standard().build();</span>
+    private static final int DEFAULT_READAHEAD = 0;
+
+<span class="fc" id="L39">    private int maxConcurrentTransactions = SdkHttpConfigurationOption.GLOBAL_HTTP_DEFAULTS</span>
+<span class="fc" id="L40">        .get(SdkHttpConfigurationOption.MAX_CONNECTIONS);</span>
+<span class="fc" id="L41">    private int readAhead = DEFAULT_READAHEAD;</span>
+    private ExecutorService executorService;
+    private QldbSessionClientBuilder clientBuilder;
+    private String ledgerName;
+<span class="fc" id="L45">    private RetryPolicy retryPolicy = RetryPolicy.builder().build();</span>
+<span class="fc" id="L46">    private IonSystem ionSystem = DEFAULT_ION_SYSTEM;</span>
+
+<span class="fc" id="L48">    QldbDriverImplBuilder() {</span>
+<span class="fc" id="L49">    }</span>
+
+    @Override
+    public QldbDriver build() {
+<span class="fc" id="L53">        Validate.paramNotBlank(ledgerName, &quot;ledgerName&quot;);</span>
+<span class="fc" id="L54">        Validate.paramNotNull(clientBuilder, &quot;client&quot;);</span>
+<span class="fc" id="L55">        return createDriver();</span>
+    }
+
+    @Override
+    public QldbDriverBuilder ionSystem(IonSystem ionSystem) {
+<span class="fc" id="L60">        Validate.paramNotNull(ionSystem, &quot;ionSystem&quot;);</span>
+<span class="fc" id="L61">        this.ionSystem = ionSystem;</span>
+<span class="fc" id="L62">        return this;</span>
+    }
+
+    @Override
+    public QldbDriverBuilder ledger(String ledgerName) {
+<span class="fc" id="L67">        Validate.paramNotBlank(ledgerName, &quot;ledgerName&quot;);</span>
+<span class="fc" id="L68">        this.ledgerName = ledgerName;</span>
+<span class="fc" id="L69">        return this;</span>
+    }
+
+    @Override
+    public QldbDriverBuilder transactionRetryPolicy(RetryPolicy retryPolicy) {
+<span class="fc" id="L74">        Validate.notNull(retryPolicy, &quot;retryPolicy&quot;);</span>
+<span class="fc" id="L75">        this.retryPolicy = retryPolicy;</span>
+<span class="fc" id="L76">        return this;</span>
+    }
+
+    @Override
+    public QldbDriverBuilder sessionClientBuilder(QldbSessionClientBuilder clientBuilder) {
+<span class="fc" id="L81">        Validate.paramNotNull(clientBuilder, &quot;clientBuilder&quot;);</span>
+<span class="fc" id="L82">        this.clientBuilder = clientBuilder;</span>
+<span class="fc" id="L83">        return this;</span>
+    }
+
+    /**
+     * &lt;p&gt;Specify the limit to the pool of available sessions.&lt;/p&gt;
+     *
+     * &lt;p&gt;Attempting to retrieve a session when the maximum number of sessions is already withdrawn will block until
+     * a session becomes available.&lt;/p&gt;
+     *
+     * @param maxConcurrentTransactions
+     *              The maximum number of sessions that can be created from the pool at any one time.
+     *
+     * @return This builder object.
+     */
+    @Override
+    public QldbDriverBuilder maxConcurrentTransactions(int maxConcurrentTransactions) {
+<span class="fc" id="L99">        Validate.isPositive(maxConcurrentTransactions, &quot;maxConcurrentTransactions&quot;);</span>
+<span class="fc" id="L100">        this.maxConcurrentTransactions = maxConcurrentTransactions;</span>
+<span class="fc" id="L101">        return this;</span>
+    }
+
+    /**
+     * &lt;p&gt;Specify the number of read-ahead buffers, determining the amount of sets of results buffered in memory,
+     * for each open result set, created within the driver. If read-ahead is desired to be enabled, this must be set to
+     * at least 2.&lt;/p&gt;
+     *
+     * &lt;p&gt;The higher the read-ahead buffer count, the more memory will be consumed by the driver when retrieving results.&lt;/p&gt;
+     *
+     * &lt;p&gt;When read-ahead is set to any number greater than 0, a background thread will be started to perform retrieval.
+     * To supply an {@link ExecutorService} for the threads, see {@link #readAhead(int, ExecutorService)}.&lt;/p&gt;
+     *
+     * &lt;p&gt;When the executor is not provided, a new {@link Thread} is created to perform the retrieval.&lt;/p&gt;
+     *
+     * @param readAhead
+     *              The number of read-ahead buffers for each open result set, 0 for no asynchronous read-ahead.
+     *
+     * @return This builder object.
+     */
+    @Override
+    public QldbDriverBuilder readAhead(int readAhead) {
+<span class="nc" id="L123">        software.amazon.qldb.Validate.assertIsAtLeastTwo(readAhead, &quot;readAhead&quot;);</span>
+<span class="nc" id="L124">        this.readAhead = readAhead;</span>
+<span class="nc" id="L125">        this.executorService = null;</span>
+<span class="nc" id="L126">        return this;</span>
+    }
+
+    /**
+     * &lt;p&gt;Specify the number of read-ahead buffers, determining the amount of sets of results buffered in memory,
+     * for each open result set, created within the driver.&lt;/p&gt;
+     *
+     * &lt;p&gt;The higher the read-ahead buffer count, the more memory will be consumed by the driver when retrieving results.&lt;/p&gt;
+     *
+     * &lt;p&gt;When read-ahead is set to any number greater than 0, the supplied {@link ExecutorService} will be used to
+     * asynchronously retrieved results. To simply start new threads, see {@link #readAhead(int)}.&lt;/p&gt;
+     *
+     * @param readAhead
+     *              The number of read-ahead buffers for each open result set, 0 for no asynchronous read-ahead.
+     * @param executorService
+     *              The executor to be used by the retrieval thread.
+     *
+     * @return This builder object.
+     */
+    @Override
+    public QldbDriverBuilder readAhead(int readAhead, ExecutorService executorService) {
+<span class="nc" id="L147">        Validate.isNotNegative(readAhead, &quot;readAhead&quot;);</span>
+<span class="nc" id="L148">        Validate.notNull(executorService, &quot;executorService&quot;);</span>
+<span class="nc" id="L149">        this.readAhead = readAhead;</span>
+<span class="nc" id="L150">        this.executorService = executorService;</span>
+<span class="nc" id="L151">        return this;</span>
+    }
+
+    private QldbDriver createDriver() {
+<span class="fc" id="L155">        clientBuilder.applyMutation(client -&gt; {</span>
+<span class="nc" id="L156">            client.overrideConfiguration(oc -&gt; {</span>
+<span class="nc" id="L157">                oc.putAdvancedOption(SdkAdvancedClientOption.USER_AGENT_PREFIX, getVersion());</span>
+<span class="nc" id="L158">                oc.retryPolicy(software.amazon.awssdk.core.retry.RetryPolicy.builder().numRetries(0).build());</span>
+<span class="nc" id="L159">            });</span>
+<span class="nc" id="L160">        });</span>
+        AttributeMap httpConfig = AttributeMap
+<span class="fc" id="L162">            .builder()</span>
+<span class="fc" id="L163">            .put(SdkHttpConfigurationOption.MAX_CONNECTIONS, maxConcurrentTransactions)</span>
+<span class="fc" id="L164">            .build();</span>
+
+<span class="fc" id="L166">        clientBuilder.httpClient(new DefaultSdkHttpClientBuilder().buildWithDefaults(httpConfig));</span>
+<span class="fc" id="L167">        return new QldbDriverImpl(ledgerName, clientBuilder.build(), retryPolicy, readAhead, maxConcurrentTransactions, ionSystem,</span>
+                                  executorService);
+    }
+
+    private String getVersion() {
+        String version;
+        try {
+<span class="nc" id="L174">            version = VERSION + ResourceBundle.getBundle(&quot;version&quot;).getString(VERSION_KEY);</span>
+<span class="nc" id="L175">        } catch (MissingResourceException e) {</span>
+<span class="nc" id="L176">            version = VERSION + &quot;unknown&quot;;</span>
+<span class="nc" id="L177">        }</span>
+<span class="nc" id="L178">        return version;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

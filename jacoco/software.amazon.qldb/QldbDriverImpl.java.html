@@ -1,0 +1,218 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>QldbDriverImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">software.amazon.qldb:amazon-qldb-driver-java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.qldb</a> &gt; <span class="el_source">QldbDriverImpl.java</span></div><h1>QldbDriverImpl.java</h1><pre class="source lang-java linenums">/*
+ * Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;). You may not use this file except in compliance with
+ * the License. A copy of the License is located at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * or in the &quot;license&quot; file accompanying this file. This file is distributed on an &quot;AS IS&quot; BASIS, WITHOUT WARRANTIES OR
+ * CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions
+ * and limitations under the License.
+ */
+
+package software.amazon.qldb;
+
+import com.amazon.ion.IonSystem;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.annotations.ThreadSafe;
+import software.amazon.awssdk.services.qldbsession.QldbSessionClient;
+import software.amazon.awssdk.services.qldbsession.model.InvalidSessionException;
+import software.amazon.awssdk.utils.Validate;
+import software.amazon.qldb.exceptions.Errors;
+import software.amazon.qldb.exceptions.QldbDriverException;
+
+/**
+ * Implementation of the QldbDriver.
+ *
+ * {@link QldbDriver} is the main entry point to execute transactions with a QLDB Ledger.
+ *
+ * &lt;p&gt;The implementation executes a transaction when a lambda function is passed to any of
+ * its execute methods.
+ *
+ * &lt;p&gt;This object is thread-safe.&lt;/p&gt;
+ */
+@ThreadSafe
+class QldbDriverImpl implements QldbDriver {
+    static final String TABLE_NAME_QUERY =
+        &quot;SELECT VALUE name FROM information_schema.user_tables WHERE status = 'ACTIVE'&quot;;
+<span class="fc" id="L46">    private static final Logger logger = LoggerFactory.getLogger(QldbDriver.class);</span>
+    private static final long DEFAULT_TIMEOUT_MS = 1;
+
+    private final String ledgerName;
+
+    private final Semaphore poolPermits;
+    private final BlockingQueue&lt;QldbSession&gt; pool;
+
+    private final int readAhead;
+    private final ExecutorService executorService;
+    private final QldbSessionClient amazonQldbSession;
+    private final RetryPolicy retryPolicy;
+    private final IonSystem ionSystem;
+    private final AtomicBoolean isClosed;
+    private final int transactionRetryLimit;
+
+
+    /**
+     * Constructor for the for the pool driver. To create an instance of the QldbDriver
+     * use the {@link QldbDriverBuilder}.
+     *
+     * @param ledgerName
+     *                  The ledger to create sessions to.
+     * @param qldbSessionClient
+     *                  The low-level session used for communication with QLDB.
+     * @param retryPolicy
+     *                  The retry policy that specifes how many times it should be retried and how long to delay the next retry
+     *                  upon encountering a non-fatal error.
+     * @param readAhead
+     *                  The number of read-ahead buffers for each open result set created from sessions from this
+     *                  driver.
+     * @param maxConcurrentTransactions
+     *                  Specifies how many concurrent transactions can be executed.
+     * @param ionSystem
+     *                  The {@link IonSystem} sessions created by this driver will use.
+     * @param executorService
+     *                  The executor to be used by the retrieval thread if read-ahead is enabled.
+     */
+    protected QldbDriverImpl(String ledgerName,
+                             QldbSessionClient qldbSessionClient,
+                             RetryPolicy retryPolicy,
+                             int readAhead,
+                             int maxConcurrentTransactions,
+                             IonSystem ionSystem,
+<span class="fc" id="L90">                             ExecutorService executorService) {</span>
+<span class="fc" id="L91">        this.ledgerName = ledgerName;</span>
+<span class="fc" id="L92">        this.amazonQldbSession = qldbSessionClient;</span>
+<span class="fc" id="L93">        this.retryPolicy = retryPolicy;</span>
+<span class="fc" id="L94">        this.ionSystem = ionSystem;</span>
+<span class="fc" id="L95">        this.isClosed = new AtomicBoolean(false);</span>
+<span class="fc" id="L96">        this.readAhead = readAhead;</span>
+<span class="fc" id="L97">        this.executorService = executorService;</span>
+<span class="fc" id="L98">        this.transactionRetryLimit = Math.max(maxConcurrentTransactions + 3, maxConcurrentTransactions);</span>
+
+<span class="fc" id="L100">        this.poolPermits = new Semaphore(maxConcurrentTransactions, true);</span>
+<span class="fc" id="L101">        this.pool = new LinkedBlockingQueue&lt;&gt;();</span>
+<span class="fc" id="L102">    }</span>
+
+    @Override
+    public void close() {
+<span class="pc bpc" id="L106" title="1 of 2 branches missed.">        if (!isClosed.getAndSet(true)) {</span>
+<span class="fc bfc" id="L107" title="All 2 branches covered.">            for (QldbSession curSession = pool.poll(); curSession != null; curSession = pool.poll()) {</span>
+<span class="fc" id="L108">                curSession.close();</span>
+            }
+        }
+<span class="fc" id="L111">    }</span>
+
+    @Override
+    public void execute(ExecutorNoReturn executor) {
+<span class="fc" id="L115">        execute(executor, retryPolicy);</span>
+<span class="fc" id="L116">    }</span>
+
+    @Override
+    public void execute(ExecutorNoReturn executor, RetryPolicy retryPolicy) {
+<span class="fc" id="L120">        execute(txn -&gt; {</span>
+<span class="fc" id="L121">            executor.execute(txn);</span>
+<span class="fc" id="L122">            return Boolean.TRUE;</span>
+        }, retryPolicy);
+<span class="fc" id="L124">    }</span>
+
+    @Override
+    public &lt;T&gt; T execute(Executor&lt;T&gt; executor) {
+<span class="fc" id="L128">        return execute(executor, retryPolicy);</span>
+    }
+
+    @Override
+    public &lt;T&gt; T execute(Executor&lt;T&gt; executor, RetryPolicy retryPolicy) {
+<span class="fc" id="L133">        Validate.notNull(retryPolicy, &quot;retryPolicy&quot;);</span>
+<span class="fc bfc" id="L134" title="All 2 branches covered.">        if (isClosed.get()) {</span>
+<span class="fc" id="L135">            logger.error(Errors.DRIVER_CLOSED.get());</span>
+<span class="fc" id="L136">            throw QldbDriverException.create(Errors.DRIVER_CLOSED.get());</span>
+        }
+
+<span class="fc" id="L139">        ExecutionContext executionContext = new ExecutionContext();</span>
+<span class="fc" id="L140">        int transactionExecutionAttempt = 0;</span>
+        while (true) {
+<span class="fc" id="L142">            QldbSession qldbSession = null;</span>
+            try {
+<span class="fc" id="L144">                transactionExecutionAttempt += 1;</span>
+<span class="fc" id="L145">                qldbSession = getSession();</span>
+<span class="fc" id="L146">                return qldbSession.execute(executor, retryPolicy, executionContext);</span>
+<span class="fc" id="L147">            } catch (final InvalidSessionException ise) {</span>
+<span class="fc bfc" id="L148" title="All 2 branches covered.">                if (transactionExecutionAttempt &gt;= this.transactionRetryLimit) {</span>
+<span class="fc" id="L149">                    logger.debug(&quot;Transaction retry limit reached&quot;);</span>
+<span class="fc" id="L150">                    throw ise;</span>
+                }
+<span class="fc bfc" id="L152" title="All 2 branches covered.">                if (ise.getMessage().matches(&quot;Transaction .* has expired&quot;)) {</span>
+<span class="fc" id="L153">                    logger.debug(&quot;Encountered Transaction expiry. Error {}&quot;, ise.getMessage());</span>
+<span class="fc" id="L154">                    throw ise;</span>
+                }
+<span class="fc" id="L156">                logger.debug(&quot;Retrying with another session. Error {}&quot;, ise.getMessage());</span>
+            } finally {
+<span class="fc bfc" id="L158" title="All 2 branches covered.">                if (qldbSession != null) {</span>
+<span class="fc" id="L159">                    releaseSession(qldbSession);</span>
+                }
+            }
+<span class="fc" id="L162">        }</span>
+    }
+
+    @Override
+    public Iterable&lt;String&gt; getTableNames() {
+<span class="fc" id="L167">        final Result result = execute(txn -&gt; {</span>
+<span class="fc" id="L168">            return txn.execute(TABLE_NAME_QUERY);</span>
+        }, retryPolicy);
+<span class="fc" id="L170">        return new TableNameIterable(result);</span>
+    }
+
+    private QldbSession getSession() {
+<span class="fc" id="L174">        logger.debug(&quot;Getting session. There are {} free sessions; currently available permits is: {}.&quot;,</span>
+<span class="fc" id="L175">                pool.size(), poolPermits.availablePermits());</span>
+
+        try {
+<span class="pc bpc" id="L178" title="1 of 2 branches missed.">            if (poolPermits.tryAcquire(DEFAULT_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {</span>
+                try {
+<span class="fc" id="L180">                    QldbSession session = pool.poll();</span>
+<span class="fc bfc" id="L181" title="All 2 branches covered.">                    if (session == null) {</span>
+<span class="fc" id="L182">                        session = createNewSession();</span>
+<span class="fc" id="L183">                        logger.debug(&quot;Creating new pooled session. Session ID: {}.&quot;, session.getSessionId());</span>
+                    }
+<span class="fc" id="L185">                    return session;</span>
+<span class="fc" id="L186">                } catch (final Exception e) {</span>
+                    // If creating a new session fails then don't use a permit!
+<span class="fc" id="L188">                    poolPermits.release();</span>
+<span class="fc" id="L189">                    throw e;</span>
+                }
+            } else {
+<span class="nc" id="L192">                throw QldbDriverException.create(String.format(Errors.NO_SESSION_AVAILABLE.get(), DEFAULT_TIMEOUT_MS));</span>
+            }
+<span class="nc" id="L194">        } catch (InterruptedException ie) {</span>
+<span class="nc" id="L195">            Thread.currentThread().interrupt();</span>
+<span class="nc" id="L196">            throw QldbDriverException.create(Errors.GET_SESSION_INTERRUPTED.get());</span>
+        }
+    }
+
+    private QldbSession createNewSession() {
+<span class="fc" id="L201">        final Session session = Session.startSession(ledgerName, amazonQldbSession);</span>
+<span class="fc" id="L202">        return new QldbSession(session, readAhead, ionSystem, executorService);</span>
+    }
+
+    private void releaseSession(QldbSession session) {
+        // If a session is closed, do not submit it back to the pool,
+        // but release the permit. This ensures that the pool does not get flooded with
+        // closed sessions
+<span class="fc bfc" id="L209" title="All 2 branches covered.">        if (!session.isClosed()) {</span>
+<span class="fc" id="L210">            pool.add(session);</span>
+        }
+
+<span class="fc" id="L213">        poolPermits.release();</span>
+<span class="fc" id="L214">        logger.debug(&quot;Session returned to pool; pool size is now: {}.&quot;, pool.size());</span>
+<span class="fc" id="L215">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

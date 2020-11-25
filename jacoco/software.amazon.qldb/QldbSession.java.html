@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>QldbSession.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">software.amazon.qldb:amazon-qldb-driver-java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.qldb</a> &gt; <span class="el_source">QldbSession.java</span></div><h1>QldbSession.java</h1><pre class="source lang-java linenums">/*
+ * Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;). You may not use this file except in compliance with
+ * the License. A copy of the License is located at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * or in the &quot;license&quot; file accompanying this file. This file is distributed on an &quot;AS IS&quot; BASIS, WITHOUT WARRANTIES OR
+ * CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions
+ * and limitations under the License.
+ */
+
+package software.amazon.qldb;
+
+import com.amazon.ion.IonSystem;
+import java.time.Duration;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import org.apache.http.HttpStatus;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.annotations.NotThreadSafe;
+import software.amazon.awssdk.core.exception.SdkClientException;
+import software.amazon.awssdk.core.exception.SdkException;
+import software.amazon.awssdk.services.qldbsession.model.BadRequestException;
+import software.amazon.awssdk.services.qldbsession.model.InvalidSessionException;
+import software.amazon.awssdk.services.qldbsession.model.OccConflictException;
+import software.amazon.awssdk.services.qldbsession.model.QldbSessionException;
+import software.amazon.awssdk.services.qldbsession.model.StartTransactionResult;
+import software.amazon.awssdk.utils.Validate;
+import software.amazon.qldb.exceptions.TransactionAlreadyOpenException;
+
+/**
+ * Object responsible for executing and maintaining the lifecycle of the transaction
+ * while the {@link Executor} lambda is being executed.
+ *
+ * If there is an error while starting a transaction during the execution of the {@link Executor}
+ * lambda, then the lambda will be retried.
+ *
+ */
+@NotThreadSafe
+class QldbSession {
+<span class="fc" id="L45">    private static final Logger logger = LoggerFactory.getLogger(QldbSession.class);</span>
+    private final int readAhead;
+    private final ExecutorService executorService;
+    private Session session;
+<span class="fc" id="L49">    private final AtomicBoolean isClosed = new AtomicBoolean(true);</span>
+    private final IonSystem ionSystem;
+
+<span class="fc" id="L52">    QldbSession(Session session, int readAhead, IonSystem ionSystem, ExecutorService executorService) {</span>
+<span class="fc" id="L53">        this.ionSystem = ionSystem;</span>
+<span class="fc" id="L54">        this.session = session;</span>
+<span class="fc" id="L55">        this.isClosed.set(false);</span>
+<span class="fc" id="L56">        this.readAhead = readAhead;</span>
+<span class="fc" id="L57">        this.executorService = executorService;</span>
+<span class="fc" id="L58">    }</span>
+
+    /**
+     * Closes the object so it can't be reused to execute transactions.
+     */
+    void close() {
+<span class="pc bpc" id="L64" title="1 of 2 branches missed.">        if (!isClosed.getAndSet(true)) {</span>
+<span class="fc" id="L65">            session.close();</span>
+        }
+<span class="fc" id="L67">    }</span>
+
+    boolean isClosed() {
+<span class="fc" id="L70">        return isClosed.get();</span>
+    }
+
+    &lt;T&gt; T execute(Executor&lt;T&gt; executor, RetryPolicy retryPolicy, ExecutionContext executionContext) {
+<span class="fc" id="L74">        Validate.paramNotNull(executor, &quot;executor&quot;);</span>
+        while (true) {
+<span class="fc" id="L76">            executionContext.setLastException(null);</span>
+<span class="fc" id="L77">            Transaction transaction = null;</span>
+
+            try {
+
+<span class="fc" id="L81">                transaction = startTransaction();</span>
+<span class="fc" id="L82">                T returnedValue = executor.execute(new TransactionExecutor(transaction));</span>
+<span class="fc bfc" id="L83" title="All 2 branches covered.">                if (returnedValue instanceof StreamResult) {</span>
+                    // If someone accidentally returned a StreamResult object which would become invalidated by the
+                    // commit, automatically buffer it to allow them to use the result anyway.
+<span class="fc" id="L86">                    returnedValue = (T) new BufferedResult((Result) returnedValue);</span>
+                }
+<span class="fc" id="L88">                transaction.commit();</span>
+<span class="fc" id="L89">                return returnedValue;</span>
+<span class="fc" id="L90">            } catch (TransactionAlreadyOpenException taoe) {</span>
+<span class="fc" id="L91">                noThrowAbort(transaction);</span>
+<span class="fc" id="L92">                executionContext.setLastException(taoe);</span>
+<span class="fc bfc" id="L93" title="All 2 branches covered.">                if (executionContext.retryAttempts() &gt;= retryPolicy.maxRetries()) {</span>
+<span class="fc" id="L94">                    throw (BadRequestException) taoe.getCause();</span>
+                }
+<span class="fc" id="L96">                logger.debug(&quot;Retrying the transaction. {} &quot;, taoe.getMessage());</span>
+<span class="fc" id="L97">            } catch (InvalidSessionException ise) {</span>
+<span class="fc bfc" id="L98" title="All 2 branches covered.">                if (transaction != null) {</span>
+<span class="fc" id="L99">                    logger.warn(&quot;Transaction {} expired while executing. Cause {} &quot;, transaction.getTransactionId(),</span>
+<span class="fc" id="L100">                                ise.getMessage());</span>
+                }
+<span class="fc" id="L102">                isClosed.set(true);</span>
+<span class="fc" id="L103">                throw ise;</span>
+<span class="fc" id="L104">            } catch (OccConflictException occe) {</span>
+<span class="fc" id="L105">                executionContext.setLastException(occe);</span>
+<span class="fc bfc" id="L106" title="All 2 branches covered.">                if (executionContext.retryAttempts() &gt;= retryPolicy.maxRetries()) {</span>
+<span class="fc" id="L107">                    throw occe;</span>
+                }
+<span class="fc" id="L109">                logger.info(&quot;Retrying the transaction. {} &quot;, occe.getMessage());</span>
+<span class="fc" id="L110">            } catch (QldbSessionException qse) {</span>
+<span class="fc" id="L111">                executionContext.setLastException(qse);</span>
+<span class="fc" id="L112">                noThrowAbort(transaction);</span>
+<span class="fc bfc" id="L113" title="All 2 branches covered.">                if ((executionContext.retryAttempts() &gt;= retryPolicy.maxRetries())</span>
+<span class="fc bfc" id="L114" title="All 2 branches covered.">                    || ((qse.statusCode() != HttpStatus.SC_INTERNAL_SERVER_ERROR)</span>
+<span class="fc bfc" id="L115" title="All 2 branches covered.">                        &amp;&amp; (qse.statusCode() != HttpStatus.SC_SERVICE_UNAVAILABLE))) {</span>
+<span class="fc" id="L116">                    throw qse;</span>
+                }
+<span class="fc" id="L118">            } catch (SdkClientException sce) {</span>
+<span class="fc" id="L119">                executionContext.setLastException(sce);</span>
+<span class="fc" id="L120">                noThrowAbort(transaction);</span>
+
+                // SdkClientException means that client couldn't reach out QLDB so
+                // transaction should be retried up to the max number of attempts.
+<span class="fc bfc" id="L124" title="All 2 branches covered.">                if (executionContext.retryAttempts() &gt;= retryPolicy.maxRetries()) {</span>
+<span class="fc" id="L125">                    throw sce;</span>
+                }
+<span class="fc" id="L127">            } catch (Exception e) {</span>
+<span class="fc" id="L128">                noThrowAbort(transaction);</span>
+<span class="fc" id="L129">                throw e;</span>
+<span class="fc" id="L130">            }</span>
+<span class="fc" id="L131">            executionContext.increaseAttempt();</span>
+
+            // There was a non-fatal error that occurred, so sleep for a bit before retry.
+<span class="fc" id="L134">            retrySleep(executionContext, transaction, retryPolicy);</span>
+<span class="fc" id="L135">        }</span>
+    }
+
+    String getSessionId() {
+<span class="fc" id="L139">        return this.session.getId();</span>
+    }
+
+    private Transaction startTransaction() {
+        try {
+<span class="fc" id="L144">            final StartTransactionResult startTransaction = session.sendStartTransaction();</span>
+<span class="fc" id="L145">            return new Transaction(session, startTransaction.transactionId(), readAhead, ionSystem, executorService);</span>
+<span class="fc" id="L146">        } catch (BadRequestException e) {</span>
+<span class="fc" id="L147">            throw new TransactionAlreadyOpenException(e);</span>
+        }
+    }
+
+    private void noThrowAbort(Transaction transaction) {
+        try {
+<span class="fc bfc" id="L153" title="All 2 branches covered.">            if (null == transaction) {</span>
+<span class="fc" id="L154">                session.sendAbort();</span>
+            } else {
+<span class="fc" id="L156">                transaction.abort();</span>
+            }
+<span class="fc" id="L158">        } catch (SdkException se) {</span>
+<span class="fc" id="L159">            logger.warn(&quot;Ignored error aborting transaction during execution.&quot;, se);</span>
+<span class="fc" id="L160">        }</span>
+<span class="fc" id="L161">    }</span>
+
+    private void retrySleep(ExecutionContext executionContext, Transaction transaction, RetryPolicy retryPolicy) {
+        try {
+<span class="fc bfc" id="L165" title="All 2 branches covered.">            final String transactionId = transaction != null ? transaction.getTransactionId() : null;</span>
+<span class="fc" id="L166">            final RetryPolicyContext retryPolicyContext = new RetryPolicyContext(executionContext.lastException(),</span>
+<span class="fc" id="L167">                                                                                 executionContext.retryAttempts(),</span>
+                                                                                 transactionId);
+<span class="fc" id="L169">            Duration backoffDelay =</span>
+<span class="fc" id="L170">                retryPolicy.backoffStrategy().calculateDelay(retryPolicyContext);</span>
+<span class="fc bfc" id="L171" title="All 4 branches covered.">            if (backoffDelay == null || backoffDelay.isNegative()) {</span>
+<span class="fc" id="L172">                backoffDelay = Duration.ofMillis(0);</span>
+            }
+
+<span class="fc" id="L175">            TimeUnit.MILLISECONDS.sleep(backoffDelay.toMillis());</span>
+<span class="nc" id="L176">        } catch (InterruptedException e) {</span>
+            // Reset the interruption flag.
+<span class="nc" id="L178">            Thread.currentThread().interrupt();</span>
+<span class="fc" id="L179">        }</span>
+<span class="fc" id="L180">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

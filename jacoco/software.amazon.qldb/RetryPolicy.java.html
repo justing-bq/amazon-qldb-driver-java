@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RetryPolicy.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">software.amazon.qldb:amazon-qldb-driver-java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.qldb</a> &gt; <span class="el_source">RetryPolicy.java</span></div><h1>RetryPolicy.java</h1><pre class="source lang-java linenums">/*
+ * Copyright 2020 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;). You may not use this file except in compliance with
+ * the License. A copy of the License is located at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * or in the &quot;license&quot; file accompanying this file. This file is distributed on an &quot;AS IS&quot; BASIS, WITHOUT WARRANTIES OR
+ * CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions
+ * and limitations under the License.
+ */
+
+package software.amazon.qldb;
+
+import software.amazon.awssdk.utils.Validate;
+
+/**
+ * RetryPolicy used to retry the transactions.
+ *
+ * &lt;p&gt;
+ *     &lt;b&gt;Note&lt;/b&gt;: If no retry policy is specified when creating the {@link QldbDriver} then a
+ *     Retry Policy created will be created with the default parameters.
+ * &lt;/p&gt;
+ *
+ * The default parameters are:
+ * &lt;ul&gt;
+ *     &lt;li&gt;Retry attempts: 4&lt;/li&gt;
+ *     &lt;li&gt;BackoffStrategy: {@link DefaultQldbTransactionBackoffStrategy} &lt;/li&gt;
+ * &lt;/ul&gt;
+ *
+ * &lt;p&gt;
+ * The builder can be customized with the maximum number of retry attempts and the backoff strategy, used to compute the delay
+ * before the next retry request. Example:
+ * &lt;/p&gt;
+ *
+ * &lt;pre&gt;{@code
+ * RetryPolicy retryPolicy = RetryPolicy.builder().maxRetries(3).build()
+ *
+ * QldbDriver QldbDriver = QldbDriver.builder()
+ *                 .sessionClientBuilder(mockBuilder)
+ *                 .ledger(LEDGER)
+ *                 .transactionRetryPolicy(retryPolicy)
+ *                 .maxConcurrentTransactions(TXN_LIMIT)
+ *                 .build();
+ * }&lt;/pre&gt;
+ *
+ */
+public final class RetryPolicy {
+
+    private int maxRetries;
+
+    private BackoffStrategy backoffStrategy;
+
+<span class="fc" id="L55">    RetryPolicy(BackoffStrategy backoffStrategy, int maxRetries) {</span>
+<span class="fc" id="L56">        Validate.notNull(backoffStrategy, &quot;backoffStrategy&quot;);</span>
+<span class="fc" id="L57">        this.backoffStrategy = backoffStrategy;</span>
+<span class="fc" id="L58">        this.maxRetries = maxRetries;</span>
+<span class="fc" id="L59">    }</span>
+
+    int maxRetries() {
+<span class="fc" id="L62">        return maxRetries;</span>
+    }
+
+    BackoffStrategy backoffStrategy() {
+<span class="fc" id="L66">        return backoffStrategy;</span>
+    }
+
+    /**
+     * Factory method to create a RetryPolicy that will not retry.
+     *
+     * @return A retry policy instance
+     */
+    public static RetryPolicy none() {
+<span class="fc" id="L75">        return RetryPolicy.builder()</span>
+<span class="fc" id="L76">                          .maxRetries(0)</span>
+<span class="fc" id="L77">                          .backoffStrategy(new DefaultQldbTransactionBackoffStrategy())</span>
+<span class="fc" id="L78">                          .build();</span>
+    }
+
+    /**
+     * &lt;p&gt;Factory method to create a RetryPolicy with the maximum retry number that a transaction will be executed.&lt;/p&gt;
+     *
+     * &lt;b&gt;Note:&lt;/b&gt; The {@link DefaultQldbTransactionBackoffStrategy} backoff strategy will be used when creating the
+     * RetryPolicy with this method.
+     *
+     * @param maxRetries Maximum number of times that the transaction will be retried.
+     *
+     * @return A retry policy instance
+     */
+    public static RetryPolicy maxRetries(int maxRetries) {
+<span class="fc" id="L92">        return RetryPolicy.builder()</span>
+<span class="fc" id="L93">                          .maxRetries(maxRetries)</span>
+<span class="fc" id="L94">                          .backoffStrategy(new DefaultQldbTransactionBackoffStrategy())</span>
+<span class="fc" id="L95">                          .build();</span>
+    }
+
+    /**
+     * Creates a builder instance of the RetryPolicy.
+     *
+     * @return Builder with recommended defaults.
+     */
+    public static Builder builder() {
+<span class="fc" id="L104">        return new Builder();</span>
+    }
+
+    public static class Builder {
+        public static final int DEFAULT_RETRY_LIMIT = 4;
+
+<span class="fc" id="L110">        private BackoffStrategy backoffStrategy = new DefaultQldbTransactionBackoffStrategy();</span>
+
+<span class="fc" id="L112">        private int maxRetries = DEFAULT_RETRY_LIMIT;</span>
+
+<span class="fc" id="L114">        private Builder() {</span>
+<span class="fc" id="L115">        }</span>
+
+        /**
+         *
+         * The default value for max number of retries is {@value Builder#DEFAULT_RETRY_LIMIT}.
+         *
+         * @param maxRetries Max number of retries to allow.
+         * @return This object for method chaining.
+         */
+        public Builder maxRetries(int maxRetries) {
+<span class="fc" id="L125">            this.maxRetries = maxRetries;</span>
+<span class="fc" id="L126">            return this;</span>
+        }
+
+        /**
+         *
+         * &lt;p&gt;If backoff strategy is not provided, {@link DefaultQldbTransactionBackoffStrategy} will be used.&lt;/p&gt;
+         *
+         * &lt;p&gt;See {@link software.amazon.qldb.DefaultQldbTransactionBackoffStrategy} for a preconfigured implementation.&lt;/p&gt;
+         *
+         * @param backoffStrategy Backoff strategy to use in the RetryPolicy.
+         * @return This object for method chaining.
+         */
+        public Builder backoffStrategy(BackoffStrategy backoffStrategy) {
+<span class="fc" id="L139">            Validate.notNull(backoffStrategy, &quot;backoffStrategy&quot;);</span>
+<span class="fc" id="L140">            this.backoffStrategy = backoffStrategy;</span>
+<span class="fc" id="L141">            return this;</span>
+        }
+
+        /**
+         * Construct a RetryPolicy with the current configuration in the builder.
+         *
+         * @return Configured RetryPolicy object.
+         */
+        public RetryPolicy build() {
+<span class="fc" id="L150">            return new RetryPolicy(backoffStrategy, maxRetries);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

@@ -1,0 +1,184 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>QldbHash.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">software.amazon.qldb:amazon-qldb-driver-java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.qldb</a> &gt; <span class="el_source">QldbHash.java</span></div><h1>QldbHash.java</h1><pre class="source lang-java linenums">/*
+ * Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;). You may not use this file except in compliance with
+ * the License. A copy of the License is located at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * or in the &quot;license&quot; file accompanying this file. This file is distributed on an &quot;AS IS&quot; BASIS, WITHOUT WARRANTIES OR
+ * CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions
+ * and limitations under the License.
+ */
+
+package software.amazon.qldb;
+
+import com.amazon.ion.IonReader;
+import com.amazon.ion.IonSystem;
+import com.amazon.ion.IonValue;
+import com.amazon.ionhash.IonHashReader;
+import com.amazon.ionhash.IonHashReaderBuilder;
+import com.amazon.ionhash.MessageDigestIonHasherProvider;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.Arrays;
+import java.util.Comparator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * &lt;p&gt;A QLDB hash is either a 256 bit number or a special empty hash. See
+ * &lt;a href='https://docs.aws.amazon.com/qldb/latest/developerguide/verification.html'&gt;QLDB Verification&lt;/a&gt;&lt;/p&gt;
+ *
+ * &lt;p&gt;
+ *     The QLDB hash is used to create the commit hash of the transaction.
+ *     The QLDB hash information is generated using the  transaction id with the statements and their
+ *     parameters used in the transaction.
+ * &lt;/p&gt;
+ */
+public class QldbHash {
+<span class="fc" id="L40">    private static final Logger logger = LoggerFactory.getLogger(QldbHash.class);</span>
+    private static final int HASH_SIZE = 32;
+<span class="fc" id="L42">    private static final MessageDigestIonHasherProvider HASHER_PROVIDER = new MessageDigestIonHasherProvider(&quot;SHA-256&quot;);</span>
+
+    private byte[] qldbHash;
+    private final IonSystem ionSystem;
+
+<span class="fc" id="L47">    public QldbHash(byte[] qldbHash, IonSystem ionSystem) {</span>
+<span class="pc bpc" id="L48" title="4 of 6 branches missed.">        if (qldbHash == null || !(qldbHash.length == HASH_SIZE || qldbHash.length == 0)) {</span>
+<span class="nc" id="L49">            throw new IllegalArgumentException(String.format(&quot;Hashes must either be empty or %d bytes long&quot;,</span>
+<span class="nc" id="L50">                                                             HASH_SIZE));</span>
+        }
+<span class="fc" id="L52">        this.ionSystem = ionSystem;</span>
+<span class="fc" id="L53">        this.qldbHash = qldbHash;</span>
+<span class="fc" id="L54">    }</span>
+
+    public static QldbHash toQldbHash(String value, IonSystem ionSystem) {
+<span class="pc bpc" id="L57" title="1 of 2 branches missed.">        if (null == value) {</span>
+<span class="nc" id="L58">            return toQldbHash(ionSystem.newString(&quot;&quot;), ionSystem);</span>
+        }
+<span class="fc" id="L60">        return toQldbHash(ionSystem.newString(value), ionSystem);</span>
+    }
+
+    /**
+     * The QLDB Hash of an IonValue is just the IonHash of that value.
+     * @param value
+     *          The Ion value to hash.
+     * @param ionSystem
+     *          The Ion system that is used to read the Ion value.
+     * @return An instance of the `QldbHash` with the hashed Ion values.
+     */
+    public static QldbHash toQldbHash(IonValue value, IonSystem ionSystem) {
+<span class="fc" id="L72">        IonReader reader = ionSystem.newReader(value);</span>
+<span class="fc" id="L73">        IonHashReader hashReader = IonHashReaderBuilder.standard()</span>
+<span class="fc" id="L74">                .withHasherProvider(HASHER_PROVIDER)</span>
+<span class="fc" id="L75">                .withReader(reader)</span>
+<span class="fc" id="L76">                .build();</span>
+<span class="fc bfc" id="L77" title="All 2 branches covered.">        while (hashReader.next() != null) {</span>
+        } // read the IonValue
+<span class="fc" id="L79">        return new QldbHash(hashReader.digest(), ionSystem);</span>
+    }
+
+    /**
+     * The QLDB dot operator joins two hashes and generates a new hash.
+     * @param that
+     *          The Ion value to hash.
+     * @return An instance of the `QldbHash` with the hashed ion values.
+     */
+    public QldbHash dot(QldbHash that) {
+<span class="fc" id="L89">        byte[] concatenated = joinHashesPairwise(this.getQldbHash(), that.getQldbHash());</span>
+<span class="fc" id="L90">        MessageDigest messageDigest = newMessageDigest();</span>
+<span class="fc" id="L91">        messageDigest.update(concatenated);</span>
+<span class="fc" id="L92">        return new QldbHash(messageDigest.digest(), ionSystem);</span>
+    }
+
+    public boolean equals(Object other) {
+<span class="nc bnc" id="L96" title="All 4 branches missed.">        if (null == other || !(other instanceof QldbHash)) {</span>
+<span class="nc" id="L97">            return false;</span>
+        }
+<span class="nc bnc" id="L99" title="All 2 branches missed.">        return hashComparator.compare(this.getQldbHash(), ((QldbHash) other).getQldbHash()) == 0;</span>
+    }
+
+    public int getHashSize() {
+<span class="nc" id="L103">        return qldbHash.length;</span>
+    }
+
+    /**
+     * Retrieves the `QldbHash` bytes.
+     * @return The `QldbHash` in bytes.
+     */
+    
+    public byte[] getQldbHash() {
+<span class="fc" id="L112">        return this.qldbHash;</span>
+    }
+
+    public int hashCode() {
+<span class="nc" id="L116">        return Arrays.hashCode(getQldbHash());</span>
+    }
+
+    public boolean isEmpty() {
+<span class="nc bnc" id="L120" title="All 2 branches missed.">        return qldbHash.length == 0;</span>
+    }
+
+    public String toString() {
+<span class="nc" id="L124">        StringBuffer stringBuffer = new StringBuffer();</span>
+<span class="nc bnc" id="L125" title="All 2 branches missed.">        for (byte it : qldbHash) {</span>
+<span class="nc" id="L126">            stringBuffer.append(String.format(&quot;%02x&quot;, it));</span>
+        }
+<span class="nc" id="L128">        return stringBuffer.toString();</span>
+    }
+
+    /**
+     * Takes two hashes, sorts them, and concatenates them.
+     */
+    private static byte[] joinHashesPairwise(byte[] h1, byte[] h2) {
+<span class="pc bpc" id="L135" title="1 of 2 branches missed.">        if (h1.length == 0) {</span>
+<span class="nc" id="L136">            return h2;</span>
+        }
+<span class="pc bpc" id="L138" title="1 of 2 branches missed.">        if (h2.length == 0) {</span>
+<span class="nc" id="L139">            return h1;</span>
+        }
+<span class="fc" id="L141">        byte[] concatenated = new byte[h1.length + h2.length];</span>
+<span class="fc bfc" id="L142" title="All 2 branches covered.">        if (hashComparator.compare(h1, h2) &lt; 0) {</span>
+<span class="fc" id="L143">            System.arraycopy(h1, 0, concatenated, 0, h1.length);</span>
+<span class="fc" id="L144">            System.arraycopy(h2, 0, concatenated, h1.length, h2.length);</span>
+        } else {
+<span class="fc" id="L146">            System.arraycopy(h2, 0, concatenated, 0, h2.length);</span>
+<span class="fc" id="L147">            System.arraycopy(h1, 0, concatenated, h2.length, h1.length);</span>
+        }
+<span class="fc" id="L149">        return concatenated;</span>
+    }
+
+    /**
+     * Get a new instance of {@link MessageDigest} using the SHA-256 algorithm. If this algorithm is
+     * not available on the current JVM then throws {@link IllegalStateException}
+     */
+    private static MessageDigest newMessageDigest() {
+        try {
+<span class="fc" id="L158">            return MessageDigest.getInstance(&quot;SHA-256&quot;);</span>
+<span class="nc" id="L159">        } catch (NoSuchAlgorithmException e) {</span>
+<span class="nc" id="L160">            logger.error(&quot;Failed to create SHA-256 MessageDigest&quot;, e);</span>
+<span class="nc" id="L161">            throw new IllegalStateException(&quot;SHA-256 message digest is unavailable&quot;, e);</span>
+        }
+    }
+
+    /**
+     * Compares two hashes by their &lt;em&gt;signed&lt;/em&gt; byte values in little-endian order.
+     */
+    // CHECKSTYLE:OFF: DeclarationOrder - Implement comparator as lambda conflicts with checkstyle
+<span class="fc" id="L169">    private static Comparator&lt;byte[]&gt; hashComparator = (h1, h2) -&gt; {</span>
+    //CHECKSTYLE:ON: DeclarationOrder
+<span class="pc bpc" id="L171" title="2 of 4 branches missed.">        if (h1.length != 32 || h2.length != 32) {</span>
+<span class="nc" id="L172">            throw new IllegalArgumentException(&quot;Invalid hash&quot;);</span>
+        }
+<span class="pc bpc" id="L174" title="1 of 2 branches missed.">        for (int i = h1.length - 1; i &gt;= 0; i--) {</span>
+<span class="fc" id="L175">            int byteEqual = Byte.compare(h1[i], h2[i]);</span>
+<span class="pc bpc" id="L176" title="1 of 2 branches missed.">            if (byteEqual != 0) {</span>
+<span class="fc" id="L177">                return byteEqual;</span>
+            }
+        }
+
+<span class="nc" id="L181">        return 0;</span>
+    };
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

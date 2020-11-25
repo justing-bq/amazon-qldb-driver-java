@@ -1,0 +1,250 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ResultRetriever.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">software.amazon.qldb:amazon-qldb-driver-java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.qldb</a> &gt; <span class="el_source">ResultRetriever.java</span></div><h1>ResultRetriever.java</h1><pre class="source lang-java linenums">/*
+ * Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;). You may not use this file except in compliance with
+ * the License. A copy of the License is located at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * or in the &quot;license&quot; file accompanying this file. This file is distributed on an &quot;AS IS&quot; BASIS, WITHOUT WARRANTIES OR
+ * CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions
+ * and limitations under the License.
+ */
+
+package software.amazon.qldb;
+
+import com.amazon.ion.IonSystem;
+import com.amazon.ion.IonValue;
+import java.util.NoSuchElementException;
+import java.util.concurrent.BlockingDeque;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.LinkedBlockingDeque;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.services.qldbsession.model.Page;
+import software.amazon.awssdk.utils.Validate;
+import software.amazon.qldb.exceptions.Errors;
+import software.amazon.qldb.exceptions.QldbDriverException;
+
+/**
+ * Used to retrieve the results from QLDB, either asynchronously or synchronously.
+ *
+ * If configured to read asynchronously, a thread will be created which will read ahead of the current position and
+ * buffer chunks of data up to the configured readAhead setting. {@link #next()} will pause if the retrieval thread is
+ * still retrieving the next chunk of data when it is needed.
+ *
+ * If configured to read synchronously, then the next chunk of data will be retrieved from QLDB during the call to
+ * {@link #next()} when it has exhausted the current chunk of data.
+ */
+class ResultRetriever {
+<span class="fc" id="L42">    private static final Logger logger = LoggerFactory.getLogger(ResultRetriever.class);</span>
+
+    private final Session session;
+    private Page currentPage;
+    private int currentResultValueIndex;
+
+    private final Retriever retriever;
+    private final IonSystem ionSystem;
+    private final ExecutorService executorService;
+    private final AtomicBoolean isClosed;
+
+    /**
+     * Constructor.
+     *
+     * @param session
+     *              The parent session that represents the communication channel to QLDB.
+     * @param firstPage
+     *              The first chunk of the result, returned by the initial execution.
+     * @param txnId
+     *              The unique ID of the transaction.
+     * @param readAhead
+     *              The number of buffers to asynchronously read ahead, 0 for synchronous retrieval.
+     * @param executorService
+     *              The executor service to use for asynchronous retrieval. Null if new threads should be created.
+     */
+    ResultRetriever(Session session, Page firstPage, String txnId, int readAhead, IonSystem ionSystem,
+<span class="fc" id="L68">                           ExecutorService executorService) {</span>
+<span class="fc" id="L69">        Validate.isNotNegative(readAhead, &quot;readAhead&quot;);</span>
+
+<span class="fc" id="L71">        this.session = session;</span>
+<span class="fc" id="L72">        this.currentPage = firstPage;</span>
+<span class="fc" id="L73">        this.currentResultValueIndex = 0;</span>
+<span class="fc" id="L74">        this.ionSystem = ionSystem;</span>
+<span class="fc" id="L75">        this.executorService = executorService;</span>
+<span class="fc" id="L76">        this.isClosed = new AtomicBoolean(false);</span>
+
+        // Start the retriever thread if there are more chunks to retrieve.
+<span class="fc bfc" id="L79" title="All 2 branches covered.">        if (currentPage.nextPageToken() == null) {</span>
+<span class="fc" id="L80">            this.retriever = null;</span>
+<span class="fc bfc" id="L81" title="All 2 branches covered.">        } else if (0 == readAhead) {</span>
+<span class="fc" id="L82">            this.retriever = new Retriever(session, txnId, currentPage.nextPageToken());</span>
+        } else {
+<span class="fc" id="L84">            final ResultRetrieverRunnable runner = new ResultRetrieverRunnable(session, txnId,</span>
+<span class="fc" id="L85">                    currentPage.nextPageToken(), readAhead, isClosed);</span>
+<span class="fc" id="L86">            this.retriever = runner;</span>
+
+<span class="pc bpc" id="L88" title="1 of 2 branches missed.">            if (null == executorService) {</span>
+<span class="fc" id="L89">                final Thread retrieverThread = new Thread(runner, &quot;ResultRetriever&quot;);</span>
+<span class="fc" id="L90">                retrieverThread.setDaemon(true);</span>
+<span class="fc" id="L91">                retrieverThread.start();</span>
+<span class="fc" id="L92">            } else {</span>
+<span class="nc" id="L93">                this.executorService.submit(runner);</span>
+            }
+        }
+<span class="fc" id="L96">    }</span>
+
+    /**
+     * Indicate if there are any more data to be retrieved.
+     *
+     * @return {@code true} if there is more data and {@link #next()} will return an IonValue; {@code false} otherwise.
+     */
+    public synchronized boolean hasNext() {
+<span class="fc bfc" id="L104" title="All 2 branches covered.">        if (isClosed.get()) {</span>
+<span class="fc" id="L105">            throw QldbDriverException.create(Errors.RESULT_PARENT_INACTIVE.get(), retriever.txnId);</span>
+        }
+<span class="fc bfc" id="L107" title="All 2 branches covered.">        while (currentResultValueIndex &gt;= currentPage.values().size()) {</span>
+<span class="fc bfc" id="L108" title="All 2 branches covered.">            if (null == currentPage.nextPageToken()) {</span>
+<span class="fc" id="L109">                return false;</span>
+            }
+<span class="fc" id="L111">            currentPage = retriever.getNextPage();</span>
+<span class="fc" id="L112">            currentResultValueIndex = 0;</span>
+        }
+<span class="fc" id="L114">        return true;</span>
+    }
+
+    /**
+     * Retrieve the next IonValue in the result. Note that this should only be called if {@link #hasNext()} returns
+     * true.
+     *
+     * @return The next IonValue in the result.
+     * @throws NoSuchElementException if the iteration has no more elements.
+     */
+    public synchronized IonValue next() {
+<span class="fc bfc" id="L125" title="All 2 branches covered.">        if (!hasNext()) {</span>
+<span class="fc" id="L126">            throw new NoSuchElementException();</span>
+        }
+        // TODO: Use an InputStream instead after the GitHub feature https://github.com/amzn/ion-java/issues/292 is resolved
+<span class="fc" id="L129">        final byte[] bytes = currentPage.values().get(currentResultValueIndex++).ionBinary().asByteArray();</span>
+<span class="fc" id="L130">        return ionSystem.singleValue(bytes);</span>
+    }
+
+    /**
+     * Set this retriever to closed, indicating the parent transaction is closed.
+     */
+    void close() {
+<span class="fc" id="L137">        isClosed.set(true);</span>
+<span class="fc" id="L138">    }</span>
+
+    /**
+     * Basic object for retrieving the next chunk of data from QLDB for a result set.
+     */
+    private static class Retriever {
+        final Session session;
+        String nextPageToken;
+        private final String txnId;
+
+        /**
+         * Constructor for creating the retriever for a specific session and result.
+         *
+         * @param session
+         *              The parent session to use in retrieving results.
+         * @param txnId
+         *              The unique ID of the transaction.
+         * @param nextPageToken
+         *              The unique token identifying the next chunk of data to fetch for this result set.
+         */
+<span class="fc" id="L158">        private Retriever(Session session, String txnId, String nextPageToken) {</span>
+<span class="fc" id="L159">            this.session = session;</span>
+<span class="fc" id="L160">            this.txnId = txnId;</span>
+<span class="fc" id="L161">            this.nextPageToken = nextPageToken;</span>
+<span class="fc" id="L162">        }</span>
+
+        /**
+         * Retrieve the next chunk of data from QLDB.
+         *
+         * @return The next chunk of data from QLDB.
+         * @throws QldbDriverException if an unexpected error occurs during result retrieval.
+         */
+        Page getNextPage() {
+<span class="fc" id="L171">            final Page result = session.sendFetchPage(txnId, nextPageToken).page();</span>
+<span class="fc" id="L172">            nextPageToken = result.nextPageToken();</span>
+<span class="fc" id="L173">            return result;</span>
+        }
+    }
+
+    private static class ResultRetrieverRunnable extends Retriever implements Runnable {
+        private final BlockingDeque&lt;ResultHolder&lt;Exception&gt;&gt; results;
+        private final int readAhead;
+        private final AtomicBoolean isClosed;
+
+        /**
+         * Constructor for the Runnable responsible for asynchronous retrieval of results from QLDB.
+         *
+         * @param session
+         *              The parent session to use in retrieving results.
+         * @param txnId
+         *              The unique ID of the transaction.
+         * @param nextPageToken
+         *              The unique token identifying the next chunk of data to fetch for this result set.
+         * @param readAhead
+         *              The maximum number of chunks of data to buffer at any one time.
+         * @param isClosed
+         *              {@link AtomicBoolean} tracking the state of the parent {@link ResultRetriever}.
+         */
+        ResultRetrieverRunnable(Session session, String txnId, String nextPageToken, int readAhead,
+                                AtomicBoolean isClosed) {
+<span class="fc" id="L198">            super(session, txnId, nextPageToken);</span>
+<span class="fc" id="L199">            this.readAhead = Math.min(1, readAhead - 1);</span>
+<span class="fc" id="L200">            this.results = new LinkedBlockingDeque&lt;&gt;(readAhead);</span>
+<span class="fc" id="L201">            this.isClosed = isClosed;</span>
+<span class="fc" id="L202">        }</span>
+
+        @Override
+        public void run() {
+            try {
+<span class="fc bfc" id="L207" title="All 2 branches covered.">                while (null != nextPageToken) {</span>
+<span class="fc" id="L208">                    final Page page = super.getNextPage();</span>
+                    try {
+<span class="pc bpc" id="L210" title="1 of 2 branches missed.">                        while (!results.offer(new ResultHolder(page), 50, TimeUnit.MILLISECONDS)) {</span>
+<span class="nc bnc" id="L211" title="All 2 branches missed.">                            if (isClosed.get()) {</span>
+<span class="nc" id="L212">                                throw QldbDriverException.create(Errors.RESULT_PARENT_INACTIVE.get(),</span>
+<span class="nc" id="L213">                                                                 super.txnId);</span>
+                            }
+<span class="nc" id="L215">                            Thread.yield();</span>
+                        }
+<span class="nc" id="L217">                    } catch (InterruptedException ie) {</span>
+<span class="nc" id="L218">                        Thread.currentThread().interrupt();</span>
+<span class="nc" id="L219">                        throw QldbDriverException.create(Errors.RETRIEVE_INTERRUPTED.get(), ie);</span>
+<span class="fc" id="L220">                    }</span>
+<span class="fc" id="L221">                }</span>
+<span class="fc" id="L222">            } catch (Exception e) {</span>
+<span class="fc" id="L223">                results.clear();</span>
+<span class="pc bpc" id="L224" title="1 of 2 branches missed.">                if (!results.offerFirst(new ResultHolder&lt;&gt;(e))) {</span>
+                    // We've failed to give back the exception; log it as a best case fallback.
+<span class="nc" id="L226">                    logger.error(String.format(Errors.QUEUE_CAPACITY.get(), readAhead), e);</span>
+                }
+<span class="fc" id="L228">            }</span>
+<span class="fc" id="L229">        }</span>
+
+        @Override
+        Page getNextPage() {
+            try {
+<span class="fc" id="L234">                final ResultHolder&lt;Exception&gt; result = results.take();</span>
+<span class="fc bfc" id="L235" title="All 2 branches covered.">                if (null != result.getAssociatedValue()) {</span>
+<span class="pc bpc" id="L236" title="1 of 2 branches missed.">                    if (result.getAssociatedValue() instanceof RuntimeException) {</span>
+<span class="fc" id="L237">                        throw (RuntimeException) result.getAssociatedValue();</span>
+                    }
+<span class="nc" id="L239">                    throw new RuntimeException(result.getAssociatedValue());</span>
+                }
+
+<span class="fc" id="L242">                return result.getResult();</span>
+<span class="nc" id="L243">            } catch (InterruptedException ie) {</span>
+<span class="nc" id="L244">                Thread.currentThread().interrupt();</span>
+<span class="nc" id="L245">                throw QldbDriverException.create(Errors.RETRIEVE_INTERRUPTED.get(), ie);</span>
+            }
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

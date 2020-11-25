@@ -1,0 +1,274 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Session.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">software.amazon.qldb:amazon-qldb-driver-java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.qldb</a> &gt; <span class="el_source">Session.java</span></div><h1>Session.java</h1><pre class="source lang-java linenums">/*
+ * Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;). You may not use this file except in compliance with
+ * the License. A copy of the License is located at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * or in the &quot;license&quot; file accompanying this file. This file is distributed on an &quot;AS IS&quot; BASIS, WITHOUT WARRANTIES OR
+ * CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions
+ * and limitations under the License.
+ */
+
+package software.amazon.qldb;
+
+import com.amazon.ion.IonValue;
+import com.amazon.ion.IonWriter;
+import com.amazon.ion.system.IonBinaryWriterBuilder;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.annotations.ThreadSafe;
+import software.amazon.awssdk.core.SdkBytes;
+import software.amazon.awssdk.core.exception.SdkServiceException;
+import software.amazon.awssdk.services.qldbsession.QldbSessionClient;
+import software.amazon.awssdk.services.qldbsession.model.AbortTransactionRequest;
+import software.amazon.awssdk.services.qldbsession.model.AbortTransactionResult;
+import software.amazon.awssdk.services.qldbsession.model.CommitTransactionRequest;
+import software.amazon.awssdk.services.qldbsession.model.CommitTransactionResult;
+import software.amazon.awssdk.services.qldbsession.model.EndSessionRequest;
+import software.amazon.awssdk.services.qldbsession.model.EndSessionResult;
+import software.amazon.awssdk.services.qldbsession.model.ExecuteStatementRequest;
+import software.amazon.awssdk.services.qldbsession.model.ExecuteStatementResult;
+import software.amazon.awssdk.services.qldbsession.model.FetchPageRequest;
+import software.amazon.awssdk.services.qldbsession.model.FetchPageResult;
+import software.amazon.awssdk.services.qldbsession.model.InvalidSessionException;
+import software.amazon.awssdk.services.qldbsession.model.OccConflictException;
+import software.amazon.awssdk.services.qldbsession.model.Page;
+import software.amazon.awssdk.services.qldbsession.model.SendCommandRequest;
+import software.amazon.awssdk.services.qldbsession.model.SendCommandResponse;
+import software.amazon.awssdk.services.qldbsession.model.StartSessionRequest;
+import software.amazon.awssdk.services.qldbsession.model.StartTransactionRequest;
+import software.amazon.awssdk.services.qldbsession.model.StartTransactionResult;
+import software.amazon.awssdk.services.qldbsession.model.ValueHolder;
+import software.amazon.qldb.exceptions.Errors;
+import software.amazon.qldb.exceptions.QldbDriverException;
+
+/**
+ * Session object representing a communication channel with QLDB.
+ *
+ * This object is thread-safe.
+ */
+@ThreadSafe
+class Session implements AutoCloseable {
+<span class="fc" id="L59">    private static final Logger logger = LoggerFactory.getLogger(Session.class);</span>
+
+    private final String ledgerName;
+    private final String sessionToken;
+    private final String sessionId;
+    private final QldbSessionClient client;
+
+    /**
+     * Constructor for a session to a specific ledger.
+     #
+     * @param ledgerName
+     *              The name of the ledger to create a session to.
+     * @param sessionToken
+     *              The unique identifying token for this session to the QLDB.
+     * @param sessionId
+     *              The initial request ID for this session to QLDB.
+     * @param client
+     *              The low-level session used for communication with QLDB.
+     */
+<span class="fc" id="L78">    private Session(String ledgerName, String sessionToken, String sessionId, QldbSessionClient client) {</span>
+<span class="fc" id="L79">        this.ledgerName = ledgerName;</span>
+<span class="fc" id="L80">        this.client = client;</span>
+<span class="fc" id="L81">        this.sessionToken = sessionToken;</span>
+<span class="fc" id="L82">        this.sessionId = sessionId;</span>
+<span class="fc" id="L83">    }</span>
+
+    /**
+     * Factory method for constructing a new Session, creating a new session to the QLDB on construction.
+     *
+     * @param ledgerName
+     *              The name of the ledger to create a session to.
+     * @param client
+     *              The low-level session used for communication with QLDB.
+     *
+     * @return A newly created {@link Session}.
+     */
+    static Session startSession(String ledgerName, QldbSessionClient client) {
+<span class="fc" id="L96">        final StartSessionRequest request = StartSessionRequest.builder().ledgerName(ledgerName).build();</span>
+<span class="fc" id="L97">        final SendCommandRequest command = SendCommandRequest.builder().startSession(request).build();</span>
+
+<span class="fc" id="L99">        logger.debug(&quot;Sending start session request: {}&quot;, command);</span>
+<span class="fc" id="L100">        final SendCommandResponse result = client.sendCommand(command);</span>
+<span class="fc" id="L101">        final String sessionToken = result.startSession().sessionToken();</span>
+<span class="fc" id="L102">        final String sessionId = result.responseMetadata().requestId();</span>
+
+<span class="fc" id="L104">        return new Session(ledgerName, sessionToken, sessionId, client);</span>
+    }
+
+    @Override
+    public void close() {
+        try {
+<span class="fc" id="L110">            sendEndSession();</span>
+<span class="fc" id="L111">        } catch (SdkServiceException e) {</span>
+            // We will only log issues closing the session, as QLDB will clean them up after a timeout.
+<span class="fc" id="L113">            logger.warn(&quot;Errors closing session: {}&quot;, e.getMessage(), e);</span>
+<span class="fc" id="L114">        }</span>
+<span class="fc" id="L115">    }</span>
+
+    /**
+     * Get the session ID.
+     *
+     * @return This session's ID.
+     */
+    String getId() {
+<span class="fc" id="L123">        return sessionId;</span>
+    }
+
+    /**
+     * Get the session token.
+     *
+     * @return This session's token.
+     */
+    String getToken() {
+<span class="fc" id="L132">        return sessionToken;</span>
+    }
+
+    /**
+     * Send an abort request to QLDB, rolling back any active changes and closing any open results.
+     *
+     * @return The result of the abort transaction request.
+     */
+    AbortTransactionResult sendAbort() {
+<span class="fc" id="L141">        final AbortTransactionRequest request = AbortTransactionRequest.builder().build();</span>
+
+<span class="fc" id="L143">        SendCommandResponse result = send(SendCommandRequest.builder().abortTransaction(request));</span>
+<span class="fc" id="L144">        return result.abortTransaction();</span>
+    }
+
+    /**
+     * Send a commit request to QLDB, committing any active changes and closing any open results.
+     *
+     * @param txnId
+     *              The unique ID of the transaction to commit.
+     * @param transactionDigest
+     *              The digest hash of the transaction to commit.
+     *
+     * @return The result of the commit transaction request.
+     * @throws OccConflictException if an OCC conflict has been detected within the transaction.
+     */
+    CommitTransactionResult sendCommit(String txnId, ByteBuffer transactionDigest) {
+<span class="fc" id="L159">        final CommitTransactionRequest request = CommitTransactionRequest.builder()</span>
+<span class="fc" id="L160">             .transactionId(txnId)</span>
+<span class="fc" id="L161">             .commitDigest(SdkBytes.fromByteBuffer(transactionDigest))</span>
+<span class="fc" id="L162">             .build();</span>
+
+<span class="fc" id="L164">        SendCommandResponse result = send(SendCommandRequest.builder().commitTransaction(request));</span>
+<span class="fc" id="L165">        return result.commitTransaction();</span>
+    }
+
+    /**
+     * Send an end session request to QLDB, closing all open results and transactions.
+     *
+     * @return The result of the end session request.
+     */
+    EndSessionResult sendEndSession() {
+<span class="fc" id="L174">        final EndSessionRequest request = EndSessionRequest.builder().build();</span>
+
+<span class="fc" id="L176">        SendCommandResponse result = send(SendCommandRequest.builder().endSession(request));</span>
+<span class="fc" id="L177">        return result.endSession();</span>
+    }
+
+    /**
+     * Send an execute request with parameters to QLDB.
+     *
+     * @param statement
+     *              The PartiQL statement to execute.
+     * @param parameters
+     *              The parameters to use with the PartiQL statement for execution.
+     * @param txnId
+     *              The unique ID of the transaction to execute.
+     *
+     * @return The result of the execution, which contains a {@link Page} representing the first data chunk.
+     */
+    ExecuteStatementResult sendExecute(String statement, List&lt;IonValue&gt; parameters, String txnId) {
+<span class="fc" id="L193">        final List&lt;ValueHolder&gt; byteParameters = new ArrayList&lt;&gt;(parameters.size());</span>
+
+<span class="fc bfc" id="L195" title="All 2 branches covered.">        if (!parameters.isEmpty()) {</span>
+            try {
+<span class="fc" id="L197">                final IonBinaryWriterBuilder builder = IonBinaryWriterBuilder.standard();</span>
+<span class="fc" id="L198">                final ByteArrayOutputStream stream = new ByteArrayOutputStream();</span>
+<span class="fc" id="L199">                final IonWriter writer = builder.build(stream);</span>
+<span class="fc bfc" id="L200" title="All 2 branches covered.">                for (IonValue parameter : parameters) {</span>
+<span class="fc" id="L201">                    parameter.writeTo(writer);</span>
+<span class="fc" id="L202">                    writer.finish();</span>
+<span class="fc" id="L203">                    final SdkBytes sdkBytes = SdkBytes.fromByteArray(stream.toByteArray());</span>
+<span class="fc" id="L204">                    final ValueHolder value = ValueHolder.builder().ionBinary(sdkBytes).build();</span>
+<span class="fc" id="L205">                    byteParameters.add(value);</span>
+
+                    // Reset the stream so that it can be re-used.
+<span class="fc" id="L208">                    stream.reset();</span>
+<span class="fc" id="L209">                }</span>
+<span class="fc" id="L210">            } catch (IOException e) {</span>
+<span class="fc" id="L211">                throw QldbDriverException.create(String.format(Errors.SERIALIZING_PARAMS.get(), e.getMessage()),</span>
+                                                 e);
+<span class="fc" id="L213">            }</span>
+        }
+
+<span class="fc" id="L216">        final ExecuteStatementRequest request = ExecuteStatementRequest.builder()</span>
+<span class="fc" id="L217">                                                                       .statement(statement)</span>
+<span class="fc" id="L218">                                                                       .parameters(byteParameters)</span>
+<span class="fc" id="L219">                                                                       .transactionId(txnId)</span>
+<span class="fc" id="L220">                                                                       .build();</span>
+<span class="fc" id="L221">        SendCommandResponse result = send(SendCommandRequest.builder().executeStatement(request));</span>
+<span class="fc" id="L222">        return result.executeStatement();</span>
+    }
+
+    /**
+     * Send a fetch result request to QLDB, retrieving the next chunk of data for the result.
+
+     * @param txnId
+     *              The unique ID of the transaction to execute.
+     * @param nextPageToken
+     *              The token that indicates what the next expected page is.
+     *
+     * @return The result of the fetch page request.
+     */
+    FetchPageResult sendFetchPage(String txnId, String nextPageToken) {
+<span class="fc" id="L236">        final FetchPageRequest request = FetchPageRequest.builder()</span>
+<span class="fc" id="L237">                                                         .transactionId(txnId)</span>
+<span class="fc" id="L238">                                                         .nextPageToken(nextPageToken)</span>
+<span class="fc" id="L239">                                                         .build();</span>
+
+<span class="fc" id="L241">        SendCommandResponse result = send(SendCommandRequest.builder().fetchPage(request));</span>
+<span class="fc" id="L242">        return result.fetchPage();</span>
+    }
+
+    /**
+     * Send a start transaction request to QLDB.
+     *
+     * @return The result of the start transaction request.
+     */
+    StartTransactionResult sendStartTransaction() {
+<span class="fc" id="L251">        final StartTransactionRequest request = StartTransactionRequest.builder().build();</span>
+<span class="fc" id="L252">        final SendCommandRequest.Builder command = SendCommandRequest.builder().startTransaction(request);</span>
+
+<span class="fc" id="L254">        final SendCommandResponse result = send(command);</span>
+<span class="fc" id="L255">        return result.startTransaction();</span>
+    }
+
+    /**
+     * Send a request to QLDB.
+     *
+     * @param request
+     *              The request to send.
+     *
+     * @return The result returned by QLDB for the request.
+     * @throws OccConflictException if an OCC conflict was detected when committing a transaction.
+     * @throws InvalidSessionException when this session is invalid.
+     */
+    private SendCommandResponse send(SendCommandRequest.Builder request) {
+<span class="fc" id="L269">        final SendCommandRequest command = request.sessionToken(sessionToken).build();</span>
+<span class="fc" id="L270">        logger.debug(&quot;Sending request: {}&quot;, command);</span>
+<span class="fc" id="L271">        return client.sendCommand(command);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

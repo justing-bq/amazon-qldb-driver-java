@@ -1,0 +1,230 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Transaction.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">software.amazon.qldb:amazon-qldb-driver-java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.qldb</a> &gt; <span class="el_source">Transaction.java</span></div><h1>Transaction.java</h1><pre class="source lang-java linenums">/*
+ * Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;). You may not use this file except in compliance with
+ * the License. A copy of the License is located at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * or in the &quot;license&quot; file accompanying this file. This file is distributed on an &quot;AS IS&quot; BASIS, WITHOUT WARRANTIES OR
+ * CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions
+ * and limitations under the License.
+ */
+
+package software.amazon.qldb;
+
+import com.amazon.ion.IonSystem;
+import com.amazon.ion.IonValue;
+import java.nio.ByteBuffer;
+import java.util.ArrayDeque;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Deque;
+import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.atomic.AtomicBoolean;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.annotations.NotThreadSafe;
+import software.amazon.awssdk.core.exception.SdkException;
+import software.amazon.awssdk.services.qldbsession.model.ExecuteStatementResult;
+import software.amazon.awssdk.services.qldbsession.model.InvalidSessionException;
+import software.amazon.awssdk.services.qldbsession.model.OccConflictException;
+import software.amazon.awssdk.utils.Validate;
+import software.amazon.qldb.exceptions.Errors;
+
+/**
+ * &lt;p&gt;Interface that represents an active transaction with QLDB.&lt;/p&gt;
+ *
+ *
+ * &lt;p&gt;Every transaction is tied to the parent {@link QldbSession}, meaning that if the parent session is closed or
+ * invalidated, the child transaction is automatically closed and cannot be used. Only one transaction can be active at
+ * any given time per parent session, and thus every transaction should call {@link #abort()} or {@link #commit()} when
+ * it is no longer needed, or when a new transaction is wanted from the parent session.&lt;/p&gt;
+ *
+ * &lt;p&gt;An {@link software.amazon.awssdk.services.qldbsession.model.InvalidSessionException} indicates that the parent session is
+ * expired, and a new transaction cannot be created without a new {@link QldbSession} being created from the parent
+ * driver.&lt;/p&gt;
+ *
+ * &lt;p&gt;Any unexpected errors that occur within a transaction should not be retried using the same transaction, as the
+ * state of the transaction is now ambiguous.&lt;/p&gt;
+ *
+ * &lt;p&gt;When an OCC conflict occurs, the transaction is closed and must be handled manually by creating a new transaction
+ * and re-executing the desired queries.&lt;/p&gt;
+ *
+ * &lt;p&gt;Child Result objects will be closed when the transaction is aborted or committed.&lt;/p&gt;
+ */
+@NotThreadSafe
+class Transaction {
+<span class="fc" id="L59">    private static final Logger logger = LoggerFactory.getLogger(Transaction.class);</span>
+    private final Session session;
+    private final String txnId;
+<span class="fc" id="L62">    private final AtomicBoolean isClosed = new AtomicBoolean(true);</span>
+    private final IonSystem ionSystem;
+    private QldbHash txnHash;
+
+    private final int readAheadBufferCount;
+    private final ExecutorService executorService;
+
+    // We are allowing for an unbounded list here as the number of results in a transaction will practically be limited
+    // by the operations performed on QLDB.
+    private final Deque&lt;Result&gt; results;
+
+    Transaction(Session session, String txnId, int readAheadBufferCount, IonSystem ionSystem,
+<span class="fc" id="L74">                ExecutorService executorService) {</span>
+<span class="fc" id="L75">        Validate.notNull(session, &quot;session&quot;);</span>
+<span class="fc" id="L76">        Validate.notNull(txnId, &quot;txnId&quot;);</span>
+<span class="fc" id="L77">        Validate.isNotNegative(readAheadBufferCount, &quot;readAheadBufferCount&quot;);</span>
+<span class="fc" id="L78">        this.session = session;</span>
+<span class="fc" id="L79">        this.txnId = txnId;</span>
+<span class="fc" id="L80">        this.txnHash = QldbHash.toQldbHash(this.txnId, ionSystem);</span>
+<span class="fc" id="L81">        this.ionSystem = ionSystem;</span>
+<span class="fc" id="L82">        this.isClosed.set(false);</span>
+<span class="fc" id="L83">        this.readAheadBufferCount = readAheadBufferCount;</span>
+<span class="fc" id="L84">        this.executorService = executorService;</span>
+<span class="fc" id="L85">        this.results = new ArrayDeque&lt;&gt;();</span>
+<span class="fc" id="L86">    }</span>
+
+    /**
+     * Abort the transaction and roll back any changes. Any open Results created by the transaction will be closed.
+     *
+     * @throws software.amazon.awssdk.core.exception.SdkException if there is an error communicating with QLDB.
+     */
+    void abort() {
+<span class="fc bfc" id="L94" title="All 2 branches covered.">        if (!isClosed.get()) {</span>
+<span class="fc" id="L95">            internalClose();</span>
+<span class="fc" id="L96">            session.sendAbort();</span>
+        }
+<span class="fc" id="L98">    }</span>
+
+    /**
+     * Clean up any resources, and abort the transaction if it has not already been committed or aborted.
+     */
+    void close() {
+        try {
+<span class="fc" id="L105">            abort();</span>
+<span class="fc" id="L106">        } catch (SdkException se) {</span>
+<span class="fc" id="L107">            logger.warn(&quot;Ignored error aborting transaction when closing.&quot;, se);</span>
+<span class="fc" id="L108">        }</span>
+<span class="fc" id="L109">    }</span>
+
+    /**
+     * &lt;p&gt;Commit the transaction. Any open {@link Result} created by the transaction will be closed.&lt;/p&gt;
+     *
+     * &lt;p&gt;If QLDB detects that there has been an optimistic concurrency control conflict (failed validation check to
+     * ensure no other committed transaction has modified data that was read) then an OccConflictException will be
+     * thrown.&lt;/p&gt;
+     *
+     * @throws IllegalStateException if the transaction has been committed or aborted already, or if the returned commit
+     *                               digest from QLDB does not match.
+     * @throws OccConflictException if an OCC conflict has been detected within the transaction.
+     * @throws software.amazon.awssdk.core.exception.SdkException if there is an error communicating with QLDB.
+     */
+    void commit() {
+        try {
+<span class="fc" id="L125">            final ByteBuffer hashByteBuffer = ByteBuffer.wrap(getTransactionHash().getQldbHash());</span>
+<span class="fc" id="L126">            final ByteBuffer commitDigest = session.sendCommit(txnId, hashByteBuffer).commitDigest().asByteBuffer();</span>
+<span class="fc bfc" id="L127" title="All 2 branches covered.">            if (!commitDigest.equals(hashByteBuffer)) {</span>
+<span class="fc" id="L128">                logger.error(Errors.TXN_DIGEST_MISMATCH.get());</span>
+<span class="fc" id="L129">                throw new IllegalStateException(Errors.TXN_DIGEST_MISMATCH.get());</span>
+            }
+<span class="fc" id="L131">        } catch (OccConflictException oce) {</span>
+            // Avoid sending courtesy abort since we know transaction is dead on OCC conflict.
+<span class="fc" id="L133">            throw oce;</span>
+<span class="fc" id="L134">        } catch (InvalidSessionException ise) {</span>
+            // Avoid sending abort since we know session is dead.
+<span class="fc" id="L136">            throw ise;</span>
+<span class="fc" id="L137">        } catch (SdkException se) {</span>
+<span class="fc" id="L138">            close();</span>
+<span class="fc" id="L139">            throw se;</span>
+        } finally {
+<span class="fc" id="L141">            internalClose();</span>
+        }
+<span class="fc" id="L143">    }</span>
+
+    Result execute(String statement) {
+<span class="fc" id="L146">        return execute(statement, Collections.emptyList());</span>
+    }
+
+    Result execute(String statement, List&lt;IonValue&gt; parameters) {
+<span class="fc" id="L150">        software.amazon.awssdk.utils.Validate.paramNotBlank(statement, &quot;statement&quot;);</span>
+<span class="fc" id="L151">        Validate.notNull(parameters, &quot;parameters&quot;);</span>
+
+<span class="fc" id="L153">        setTransactionHash(dot(getTransactionHash(), statement, parameters, ionSystem));</span>
+<span class="fc" id="L154">        final ExecuteStatementResult executeStatementResult = session.sendExecute(statement, parameters, txnId);</span>
+<span class="fc" id="L155">        final StreamResult result = new StreamResult(session, executeStatementResult.firstPage(), txnId,</span>
+                readAheadBufferCount, ionSystem, executorService);
+<span class="fc" id="L157">        results.add(result);</span>
+<span class="fc" id="L158">        return result;</span>
+    }
+
+    Result execute(String statement, IonValue... parameters) {
+<span class="nc" id="L162">        Validate.notNull(parameters, &quot;parameters&quot;);</span>
+
+<span class="nc" id="L164">        return execute(statement, Arrays.asList(parameters));</span>
+    }
+
+    /**
+     * Mark the transaction as closed, and stop retrieval threads for any child {@link StreamResult} objects.
+     */
+    void internalClose() {
+<span class="fc" id="L171">        isClosed.set(true);</span>
+<span class="fc bfc" id="L172" title="All 2 branches covered.">        while (!results.isEmpty()) {</span>
+            // Avoid the use of forEach to guard against potential concurrent modification issues.
+<span class="fc" id="L174">            ((StreamResult) results.pop()).close();</span>
+        }
+<span class="fc" id="L176">    }</span>
+
+    /**
+     * Get the ID of the current transaction.
+     *
+     * @return The ID of the current transaction.
+     */
+    String getTransactionId() {
+<span class="fc" id="L184">        return txnId;</span>
+    }
+
+    /**
+     * Apply the dot function on a seed {@link QldbHash} given a statement and parameters.
+     *
+     * @param seed
+     *              The current QldbHash representing the transaction's current commit digest.
+     * @param statement
+     *              The PartiQL statement to be executed against QLDB.
+     * @param parameters
+     *              The parameters to be used with the PartiQL statement, for each ? placeholder in the statement.
+     *
+     * @return The new QldbHash for the transaction.
+     */
+    static QldbHash dot(QldbHash seed, String statement, List&lt;IonValue&gt; parameters, IonSystem ionSystem) {
+<span class="fc" id="L200">        QldbHash statementHash = QldbHash.toQldbHash(statement, ionSystem);</span>
+<span class="fc bfc" id="L201" title="All 2 branches covered.">        for (IonValue param : parameters) {</span>
+<span class="fc" id="L202">            statementHash = statementHash.dot(QldbHash.toQldbHash(param, ionSystem));</span>
+<span class="fc" id="L203">        }</span>
+<span class="fc" id="L204">        return seed.dot(statementHash);</span>
+    }
+
+    /**
+     * Get this transaction's commit digest hash.
+     *
+     * @return The current commit digest hash.
+     */
+    QldbHash getTransactionHash() {
+<span class="fc" id="L213">        return txnHash;</span>
+    }
+
+    /**
+     * Update this transaction's commit digest hash.
+     *
+     * @param hash
+     *              The new commit digest hash to replace the old one.
+     */
+    void setTransactionHash(QldbHash hash) {
+<span class="fc" id="L223">        txnHash = hash;</span>
+<span class="fc" id="L224">    }</span>
+
+    public AtomicBoolean getIsClosed() {
+<span class="fc" id="L227">        return isClosed;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

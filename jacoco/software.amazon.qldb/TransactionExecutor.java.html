@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TransactionExecutor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">software.amazon.qldb:amazon-qldb-driver-java</a> &gt; <a href="index.source.html" class="el_package">software.amazon.qldb</a> &gt; <span class="el_source">TransactionExecutor.java</span></div><h1>TransactionExecutor.java</h1><pre class="source lang-java linenums">/*
+ * Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;). You may not use this file except in compliance with
+ * the License. A copy of the License is located at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * or in the &quot;license&quot; file accompanying this file. This file is distributed on an &quot;AS IS&quot; BASIS, WITHOUT WARRANTIES OR
+ * CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions
+ * and limitations under the License.
+ */
+
+package software.amazon.qldb;
+
+import com.amazon.ion.IonValue;
+import java.util.List;
+import software.amazon.qldb.exceptions.TransactionAbortedException;
+
+/**
+ * Transaction object used within lambda executions to provide a reduced view that allows only the operations that are
+ * valid within the context of an active managed transaction.
+ */
+public class TransactionExecutor implements Executable {
+    private final Transaction transaction;
+
+    /**
+     * Constructor.
+     *
+     * @param transaction
+     *              The transaction object the TransactionExecutor wraps.
+     */
+<span class="fc" id="L33">    public TransactionExecutor(Transaction transaction) {</span>
+<span class="fc" id="L34">        this.transaction = transaction;</span>
+<span class="fc" id="L35">    }</span>
+
+    /**
+     * Abort the transaction and roll back any changes.
+     */
+    public void abort() {
+<span class="fc" id="L41">        throw new TransactionAbortedException();</span>
+    }
+
+    /**
+     * Execute the statement against QLDB and retrieve the result.
+     *
+     * @param statement
+     *              The PartiQL statement to be executed against QLDB.
+     *
+     * @return The result of executing the statement.
+     * @throws software.amazon.awssdk.services.qldbsession.model.QldbSessionException if there is an error executing against QLDB.
+     */
+    @Override
+    public Result execute(String statement) {
+<span class="fc" id="L55">        return transaction.execute(statement);</span>
+    }
+
+    /**
+     * Execute the statement using the specified parameters against QLDB and retrieve the result.
+     *
+     * @param statement
+     *              The PartiQL statement to be executed against QLDB.
+     * @param parameters
+     *              The parameters to be used with the PartiQL statement, for each ? placeholder in the statement.
+     *
+     * @return The result of executing the statement.
+     * @throws software.amazon.awssdk.services.qldbsession.model.QldbSessionException if there is an error executing against QLDB.
+     */
+    @Override
+    public Result execute(String statement, List&lt;IonValue&gt; parameters) {
+<span class="fc" id="L71">        return transaction.execute(statement, parameters);</span>
+    }
+
+    /**
+     * Execute the statement using the specified parameters against QLDB and retrieve the result.
+     *
+     * @param statement
+     *              The PartiQL statement to be executed against QLDB.
+     * @param parameters
+     *              The parameters to be used with the PartiQL statement, for each ? placeholder in the statement.
+     *
+     * @return The result of executing the statement.
+     * @throws software.amazon.awssdk.services.qldbsession.model.QldbSessionException if there is an error executing against QLDB.
+     */
+    @Override
+    public Result execute(String statement, IonValue... parameters) {
+<span class="nc" id="L87">        return transaction.execute(statement, parameters);</span>
+    }
+
+    /**
+     * Get the ID of the current transaction.
+     *
+     * @return The ID of the current transaction.
+     */
+    public String getTransactionId() {
+<span class="fc" id="L96">        return transaction.getTransactionId();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>
