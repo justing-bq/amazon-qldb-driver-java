@@ -28,15 +28,17 @@ import com.amazon.ion.system.IonSystemBuilder;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
+
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.qldbsession.model.BadRequestException;
 import software.amazon.awssdk.services.qldbsession.model.OccConflictException;
+import software.amazon.qldb.IOUsage;
 import software.amazon.qldb.QldbDriver;
 import software.amazon.qldb.Result;
+import software.amazon.qldb.TimingInformation;
 
 public class StatementExecutionIntegTest {
     private static LedgerManager ledgerManager;
@@ -45,11 +47,11 @@ public class StatementExecutionIntegTest {
 
     @BeforeAll
     public static void setup() throws InterruptedException {
-        ledgerManager = new LedgerManager(Constants.LEDGER_NAME, System.getProperty("region"));
+        ledgerManager = new LedgerManager(Constants.LEDGER_NAME+System.getProperty("ledgerSuffix"), System.getProperty("region"));
 
         ledgerManager.runCreateLedger();
 
-        driver = ledgerManager.createQldbDriver(Constants.DEFAULT, Constants.DEFAULT);
+        driver = ledgerManager.createQldbDriver(Constants.DEFAULT, Constants.RETRY_LIMIT);
 
         // Create table
         String createTableQuery = String.format("CREATE TABLE %s", Constants.TABLE_NAME);
@@ -64,7 +66,6 @@ public class StatementExecutionIntegTest {
                 return count;
             });
         assertEquals(1, createTableCount);
-
         Iterable<String> result = driver.getTableNames();
         for (String tableName : result) {
             assertEquals(Constants.TABLE_NAME, tableName);
@@ -154,7 +155,7 @@ public class StatementExecutionIntegTest {
         try {
             driver.execute(txn -> { txn.execute(createTableQuery); });
         } catch (Exception e) {
-            assertTrue(e.getCause() instanceof BadRequestException);
+            assertTrue(e instanceof BadRequestException);
 
             return;
         }
@@ -504,98 +505,72 @@ public class StatementExecutionIntegTest {
     }
 
     @Test
-    public void execute_UpdateSameRecordAtSameTime_ThrowsOccException() throws Throwable {
-        QldbDriver driver = ledgerManager.createQldbDriver(Constants.DEFAULT, 0);
-
+    public void execute_UpdateSameRecordAtSameTime_ThrowsOccException() {
         // Insert document for testing OCC
         IonStruct ionStruct = valueFactory.newEmptyStruct();
         ionStruct.add(Constants.COLUMN_NAME, valueFactory.newInt(0));
-
         String insertQuery = String.format("INSERT INTO %s ?", Constants.TABLE_NAME);
         int insertCount = driver.execute(
-            txn -> {
-                Result result = txn.execute(insertQuery, ionStruct);
-
-                int count = 0;
-                for (IonValue row : result) {
-                    count++;
-                }
-                return count;
-            });
+                txn -> {
+                    Result result = txn.execute(insertQuery, ionStruct);
+                    int count = 0;
+                    for (IonValue row : result) {
+                        count++;
+                    }
+                    return count;
+                });
         assertEquals(1, insertCount);
 
         String selectQuery = String.format("SELECT VALUE %s FROM %s", Constants.COLUMN_NAME, Constants.TABLE_NAME);
         String updateQuery = String.format("UPDATE %s SET %s = ?", Constants.TABLE_NAME, Constants.COLUMN_NAME);
 
-        AtomicReference<Throwable> childThreadException = new AtomicReference<>(null);
+        try {
+            // For testing purposes only. Forcefully causes an OCC conflict to occur.
+            // Do not invoke pooledQldbDriver.execute within the lambda function under normal circumstances.
+            driver.execute(
+                    txn -> {
+                        // Query table
+                        Result result = txn.execute(selectQuery);
+                        int intValue = 0;
+                        for (IonValue ionVal : result) {
+                            intValue = ((IonInt) ionVal).intValue();
+                        }
 
-        // Use three threads to update the same document in parallel to trigger OCC exception.
-        final int numThreads = 3;
-        List<Thread> threads = new ArrayList<>();
-        for (int i = 0; i < numThreads; i++) {
-            Thread thread = new Thread(
-                () ->
-                    driver.execute(
-                        txn -> {
-                            // Query table
-                            Result result = txn.execute(selectQuery);
+                        IonInt ionInt = valueFactory.newInt(intValue + 5);
+                        driver.execute(
+                                txn2 -> {
+                                    // Update document
+                                    txn2.execute(updateQuery, ionInt);
+                                }
+                        );
+                    });
+        } catch (Exception e) {
+            assertTrue(e instanceof OccConflictException);
 
-                            int intValue = 0;
-                            for (IonValue ionVal : result) {
-                                intValue = ((IonInt) ionVal).intValue();
-                            }
-
-                            // Update document
-                            IonInt ionInt = valueFactory.newInt(intValue + 5);
-                            txn.execute(updateQuery, ionInt);
-                        }));
-
-            Thread.UncaughtExceptionHandler handler = (th, ex) -> childThreadException.set(ex);
-            thread.setUncaughtExceptionHandler(handler);
-
-            threads.add(thread);
         }
-
-        for (Thread thread : threads) {
-            thread.start();
-        }
-
-        for (Thread thread : threads) {
-            thread.join();
-        }
-
-        Throwable exception = childThreadException.get();
-        assertNotNull(exception);
-        assertTrue(exception.getCause() instanceof OccConflictException);
 
         // Update document to make sure everything still works after the OCC exception.
         AtomicInteger updatedValue = new AtomicInteger();
         driver.execute(
-            txn -> {
-                Result result = txn.execute(selectQuery);
-
-                int intValue = 0;
-                for (IonValue ionVal : result) {
-                    intValue = ((IonInt) ionVal).intValue();
-                }
-
-                updatedValue.set(intValue + 5);
-
-                IonInt ionInt = valueFactory.newInt(updatedValue.get());
-                txn.execute(updateQuery, ionInt);
-            });
-
+                txn -> {
+                    Result result = txn.execute(selectQuery);
+                    int intValue = 0;
+                    for (IonValue ionVal : result) {
+                        intValue = ((IonInt) ionVal).intValue();
+                    }
+                    updatedValue.set(intValue + 5);
+                    IonInt ionInt = valueFactory.newInt(updatedValue.get());
+                    txn.execute(updateQuery, ionInt);
+                });
         int intVal = driver.execute(
-            txn -> {
-                Result result = txn.execute(selectQuery);
-
-                int intValue = 0;
-                for (IonValue ionVal : result) {
-                    intValue = ((IonInt) ionVal).intValue();
-                }
-                return intValue;
-            });
-
+                txn -> {
+                    Result result = txn.execute(selectQuery);
+                    int intValue = 0;
+                    for (IonValue ionVal : result) {
+                        intValue = ((IonInt) ionVal).intValue();
+                    }
+                    return intValue;
+                });
         assertEquals(updatedValue.get(), intVal);
     }
 
@@ -635,11 +610,56 @@ public class StatementExecutionIntegTest {
         try {
             driver.execute(txn -> { txn.execute(deleteQuery); });
         } catch (Exception e) {
-            assertTrue(e.getCause() instanceof BadRequestException);
+            assertTrue(e instanceof BadRequestException);
 
             return;
         }
 
         fail("Test should have thrown BadRequestException");
+    }
+
+    @Test
+    public void execute_ExecutionMetrics() {
+        driver.execute(
+            txn -> {
+                String insertQuery = String.format("INSERT INTO %s << {'col': 1}, {'col': 2}, {'col': 3} >>", Constants.TABLE_NAME);
+                txn.execute(insertQuery);
+            });
+
+        // Given
+        String selectQuery = String.format("SELECT * FROM %s as a, %s as b, %s as c, %s as d, %s as e, %s as f",
+                Constants.TABLE_NAME, Constants.TABLE_NAME, Constants.TABLE_NAME, Constants.TABLE_NAME, Constants.TABLE_NAME, Constants.TABLE_NAME);
+
+        // When
+        driver.execute(
+            txn -> {
+                Result result = txn.execute(selectQuery);
+
+                for (IonValue row : result) {
+                    IOUsage ioUsage = result.getConsumedIOs();
+                    TimingInformation timingInfo = result.getTimingInformation();
+
+                    assertNotNull(ioUsage);
+                    assertNotNull(timingInfo);
+
+                    assertTrue(ioUsage.getReadIOs() > 0);
+                    assertTrue(timingInfo.getProcessingTimeMilliseconds() > 0);
+                }
+            });
+
+        // When
+        Result result = driver.execute(
+            txn -> {
+                return txn.execute(selectQuery);
+            });
+
+        IOUsage ioUsage = result.getConsumedIOs();
+        TimingInformation timingInfo = result.getTimingInformation();
+
+        assertNotNull(ioUsage);
+        assertNotNull(timingInfo);
+
+        assertEquals(1092, ioUsage.getReadIOs());
+        assertTrue(timingInfo.getProcessingTimeMilliseconds() > 0);
     }
 }

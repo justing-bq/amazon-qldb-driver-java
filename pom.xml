@@ -18,7 +18,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>software.amazon.qldb</groupId>
     <artifactId>amazon-qldb-driver-java</artifactId>
-    <version>2.0.0</version>
+    <version>2.1.1</version>
     <packaging>jar</packaging>
 
     <name>${project.groupId}:${project.artifactId}</name>
@@ -28,9 +28,9 @@
     <url>https://aws.amazon.com/qldb/</url>
 
     <scm>
-        <connection>scm:git:https://github.com/aws/amazon-qldb-driver-java.git</connection>
-        <developerConnection>scm:git:git@github.com:aws/amazon-qldb-driver-java.git</developerConnection>
-        <url>https://github.com/aws/amazon-qldb-driver-java</url>
+        <connection>scm:git:https://github.com/awslabs/amazon-qldb-driver-java.git</connection>
+        <developerConnection>scm:git:git@github.com:awslabs/amazon-qldb-driver-java.git</developerConnection>
+        <url>https://github.com/awslabs/amazon-qldb-driver-java</url>
     </scm>
 
     <licenses>
@@ -63,12 +63,12 @@
     </distributionManagement>
 
     <properties>
-        <aws.java.sdk.version>2.13.18</aws.java.sdk.version>
+        <aws.java.sdk.version>2.15.79</aws.java.sdk.version>
         <build.year>${maven.build.timestamp}</build.year>
         <checkstyle.version>8.29</checkstyle.version>
         <findbugs.maven.plugin.version>3.0.5</findbugs.maven.plugin.version>
         <ion.hash.version>1.0.0</ion.hash.version>
-        <ion.version>1.4.0</ion.version>
+        <ion.version>1.8.0</ion.version>
         <jacoco.maven.plugin.version>0.8.5</jacoco.maven.plugin.version>
         <jdkVersion>1.8</jdkVersion>
         <junit.jupiter.migration.support.version>5.0.0-M4</junit.jupiter.migration.support.version>
@@ -84,7 +84,7 @@
         <maven.pmd.plugin.version>3.11.0</maven.pmd.plugin.version>
         <maven.site.plugin.version>3.7.1</maven.site.plugin.version>
         <maven.source.plugin.version>3.0.1</maven.source.plugin.version>
-        <maven.surefire.plugin.version>3.0.0-M4</maven.surefire.plugin.version>
+        <maven.surefire.plugin.version>3.0.0-M5</maven.surefire.plugin.version>
         <mockito.core.version>3.3.3</mockito.core.version>
         <nexus.staging.maven.plugin.version>1.6.7</nexus.staging.maven.plugin.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -95,22 +95,7 @@
     <dependencies>
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
-            <artifactId>sdk-core</artifactId>
-            <version>${aws.java.sdk.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>software.amazon.awssdk</groupId>
-            <artifactId>http-client-spi</artifactId>
-            <version>${aws.java.sdk.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>software.amazon.awssdk</groupId>
             <artifactId>apache-client</artifactId>
-            <version>${aws.java.sdk.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>software.amazon.awssdk</groupId>
-            <artifactId>netty-nio-client</artifactId>
             <version>${aws.java.sdk.version}</version>
         </dependency>
         <dependency>
@@ -355,7 +340,7 @@
                 <artifactId>maven-pmd-plugin</artifactId>
                 <version>${maven.pmd.plugin.version}</version>
                 <configuration>
-                    <linkXref>true</linkXref>
+                    <linkXRef>true</linkXRef>
                     <sourceEncoding>utf-8</sourceEncoding>
                     <minimumTokens>100</minimumTokens>
                 </configuration>
